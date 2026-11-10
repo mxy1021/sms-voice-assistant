@@ -14,7 +14,7 @@
     <application android:name=".ProbeApplication" android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@android:drawable/ic_btn_speak_now"
-        android:label="短信语音阶段 0" android:supportsRtl="true"
+        android:label="SMS Voice Assistant" android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

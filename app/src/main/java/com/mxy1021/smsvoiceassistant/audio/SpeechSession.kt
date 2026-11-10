@@ -26,6 +26,7 @@ class SpeechSession(
     private val smsEventId: String? = null,
     private val finished: () -> Unit
 ) {
+    val isSms get() = fromSms
     private val main = app.main
     private val audio = app.getSystemService(AudioManager::class.java)
     private val target = app.target

@@ -2,195 +2,206 @@ package com.mxy1021.smsvoiceassistant
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
+import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Bundle
-import android.os.Build
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.mxy1021.smsvoiceassistant.bluetooth.BluetoothProbe
-import com.mxy1021.smsvoiceassistant.sms.OtpParser
-import com.mxy1021.smsvoiceassistant.audio.TtsCompatibilityProbe
-import com.mxy1021.smsvoiceassistant.audio.ForegroundFocusTest
-import com.mxy1021.smsvoiceassistant.audio.Stage0Log
+import com.mxy1021.smsvoiceassistant.sms.SpeechFormatter
+import com.mxy1021.smsvoiceassistant.ui.Readiness
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
     private var revision by mutableIntStateOf(0)
-    private var compatibilityRunning by mutableStateOf(false)
-    private var offlineConfirmed by mutableStateOf(false)
-    private lateinit var compatibility: TtsCompatibilityProbe
-    private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        revision++
-        app.event("权限流程已返回，请核对实际授权状态")
+    private var devices by mutableStateOf<List<BluetoothDevice>>(emptyList())
+    private var connected by mutableStateOf(false)
+    private var routeReady by mutableStateOf(false)
+    private var checking by mutableStateOf(false)
+    private var routeStatus by mutableStateOf("尚未检查")
+    private var requestSequence = 0
+    private val audioCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) { refresh() }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) { refresh() }
+    }
+    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        refresh()
+        app.event("权限流程已返回，请核对实际状态；拒绝后可从系统设置授权")
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        compatibility = newCompatibilityProbe()
-        setContent { MaterialTheme { Surface { ProbeScreen() } } }
+        enableEdgeToEdge()
+        setContent {
+            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                Surface(Modifier.fillMaxSize()) { MainScreen() }
+            }
+        }
     }
     override fun onStart() {
-        super.onStart(); app.visible = true; revision++
-        Stage0Log.state("lifecycle", "Activity", "onStart；前台=true")
-        app.smsTime(null, "Activity.onStart")
-        app.environment(null, "Activity.onStart状态")
+        super.onStart(); app.visible = true
+        getSystemService(AudioManager::class.java).registerAudioDeviceCallback(audioCallback, app.main)
     }
+    override fun onResume() { super.onResume(); refresh() }
     override fun onStop() {
-        compatibility.cancel()
-        if (app.foregroundFocus != null) app.timeline.add("Activity.onStop：取消前台最小焦点测试")
-        app.foregroundFocus?.cancel()
-        offlineConfirmed = false
+        requestSequence++
+        getSystemService(AudioManager::class.java).unregisterAudioDeviceCallback(audioCallback)
         app.visible = false
-        Stage0Log.state("lifecycle", "Activity", "onStop；前台=false")
-        app.smsTime(null, "Activity.onStop")
-        app.environment(null, "Activity.onStop状态")
+        // SMS work is independent of Activity lifecycle. Explicit foreground tests are not.
+        if (app.session?.background == false && !app.session!!.isSms) app.session?.cancel()
         super.onStop()
     }
-    private fun newCompatibilityProbe() = TtsCompatibilityProbe(this) {
-        compatibilityRunning = false
-        app.compatibilityTestActive = false
-    }
-    private fun testCompatibility() {
-        if (!offlineConfirmed || compatibilityRunning || app.session != null || app.foregroundFocus != null || !app.visible) {
-            app.timeline.add("兼容性测试按钮未启动：断网未确认、非前台或另一测试忙碌"); return
-        }
-        compatibility = newCompatibilityProbe()
-        compatibilityRunning = true
-        app.compatibilityTestActive = true
+    private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    private fun refresh() {
         revision++
-        compatibility.start()
+        val sequence = ++requestSequence
+        val target = app.target
+        devices = BluetoothProbe(this).paired()
+        checking = true; connected = false; routeReady = false
+        routeStatus = "正在检查连接与预期路由"
+        try {
+            BluetoothProbe(this).inspect(target) { result ->
+                if (sequence == requestSequence && target == app.target) {
+                    connected = result.connected; routeReady = result.output != null
+                    routeStatus = result.status; checking = false
+                }
+            }
+        } catch (_: Exception) { checking = false; routeStatus = "无法检查，请确认蓝牙权限并刷新" }
     }
-    override fun onDestroy() {
-        if (app.session?.background == false) {
-            app.timeline.add("Activity.onDestroy：取消尚未结束的前台原 PCM 会话")
-            app.session?.cancel()
-        }
-        super.onDestroy()
+    private fun openAppSettings() {
+        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+        catch (_: Exception) { app.event("无法打开系统设置，请手动进入本应用的应用信息") }
     }
-    @Composable private fun ProbeScreen() {
+    private fun deviceName(device: BluetoothDevice): String = try { device.name?.takeIf { it.isNotBlank() } ?: "未命名已配对设备" }
+        catch (_: SecurityException) { "蓝牙权限已撤销" }
+    private fun matches(device: BluetoothDevice, target: String?) = try { device.address.equals(target, true) }
+        catch (_: SecurityException) { false }
+
+    @Composable private fun MainScreen() {
         val settings by app.settings.state.collectAsState()
+        val speaking by app.speaking.collectAsState()
         val event by app.events.collectAsState()
         val currentRevision = revision
-        val diagnostics by compatibility.diagnostics.collectAsState()
-        val timeline by app.timeline.entries.collectAsState()
-        val smsState by app.smsState.collectAsState()
-        val smsEvents by app.smsEvents.collectAsState()
-        val audioModes by app.audioModeResults.collectAsState()
-        fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
-        var devices by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
-        var route by remember { mutableStateOf("未检测") }
-        var selected by remember { mutableStateOf(app.target) }
-        var mode by remember { mutableIntStateOf(app.mode) }
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("SMS Voice Assistant · 阶段 0", style = MaterialTheme.typography.titleLarge)
-            Text("阶段1规则：全文最多80字符，且完整音频≤5秒并满足8秒总预算；超限整条拒绝。")
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("仅播报验证码")
-                Switch(settings.otpOnlyEnabled, { app.settings.setOtpOnly(it); app.session?.cancel() })
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("精简验证码播报")
-                Switch(settings.otpSimplifyEnabled, { app.settings.setSimplify(it); app.session?.cancel() }, enabled = settings.otpOnlyEnabled)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (settings.announcingEnabled) "已启用，等待短信" else "已暂停")
-                Switch(checked = settings.announcingEnabled, onCheckedChange = app::setAnnouncingEnabled)
-            }
-            Text("系统 API ${Build.VERSION.SDK_INT}；target 34；compile 36")
-            Text("系统默认中文 TTS 兼容性测试", style = MaterialTheme.typography.titleMedium)
-            Text("请先关闭 Wi-Fi 和移动数据。此测试仅播放固定人工文本，按系统当前输出播放，可能使用扬声器；不检查蓝牙、不请求应用音频焦点。")
-            Row {
-                Checkbox(checked = offlineConfirmed, onCheckedChange = { offlineConfirmed = it }, enabled = !compatibilityRunning)
-                Text("我已关闭 Wi-Fi 和移动数据（人工确认，APP 无法核实）")
-            }
-            Button(onClick = { testCompatibility() }, enabled = offlineConfirmed && !compatibilityRunning && app.session == null && app.foregroundFocus == null) {
-                Text("系统默认中文 TTS 兼容性测试")
-            }
-            Text("固定测试文本：${TtsCompatibilityProbe.TEST_TEXT}")
-            OutlinedButton(onClick = { compatibility.cancel() }, enabled = compatibilityRunning) { Text("停止兼容性测试") }
-            diagnostics.forEach { (label, value) -> Text("$label：$value") }
-            Text("onDone 或非网络 Voice 标记均不代表离线验收通过，必须记录断网条件和实际听感。基础测试成功后，再执行下方原有严格蓝牙/焦点测试。")
-            HorizontalDivider()
-            Text("RECEIVE_SMS：${if (granted(Manifest.permission.RECEIVE_SMS)) "已授予" else "未授予"}")
-            Text("BLUETOOTH_CONNECT：${if (granted(Manifest.permission.BLUETOOTH_CONNECT)) "已授予" else "未授予"}")
-            Button(onClick = { permissionRequest.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.BLUETOOTH_CONNECT)) }) {
-                Text("申请两项验证权限")
-            }
-            Text("短信权限可能受安装器白名单限制；申请返回不代表已授予。")
-            Button(onClick = { devices = BluetoothProbe(this@MainActivity).paired(); revision++ }) { Text("读取已配对设备") }
-            Text(if (selected == null) "目标耳机：未选择" else "目标耳机：已选择（仅在本机保存身份）")
-            devices.forEachIndexed { index, device ->
-                val label = try { device.name ?: "未命名设备" } catch (_: SecurityException) { "权限已撤销" }
-                OutlinedButton(onClick = {
-                    try { app.target = device.address; selected = app.target; route = "目标已更换，请重新检测" }
-                    catch (_: SecurityException) { route = "蓝牙权限已撤销" }
-                }) { Text("${index + 1}. $label") }
-            }
-            Button(onClick = {
-                try { BluetoothProbe(this@MainActivity).inspect(app.target) { route = it.status } }
-                catch (_: Exception) { route = "检测失败，请检查权限和蓝牙状态" }
-            }) { Text("检测连接与预期路由") }
-            Text("蓝牙 / 音频路由：$route")
-            Text("TTS：每次测试冷启动并检查离线简体中文资源；结果见下方事件。")
-            Text("模式：${if (mode == AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK) "A 降低音乐音量" else "B 请求暂停音乐"}")
-            Text("模式在每次启动时固定；播放中切换只影响下一次。")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { mode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK; app.mode = mode }) { Text("模式 A") }
-                OutlinedButton(onClick = { mode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT; app.mode = mode }) { Text("模式 B") }
-            }
-            Button(onClick = { app.startAudioModeTest(mode) }) { Text("离线中文 / 焦点测试（A/B 直接播放）") }
-            Text("A/B 和下方已通过的最小测试使用同一播放类、同一固定文本与属性，仅切换焦点 gain。语音与音乐必须分别确认。")
-            Button(onClick = { app.startForegroundFocusTest() }) { Text("前台最小焦点播放测试") }
-            Text("固定新句：${ForegroundFocusTest.TEST_TEXT}")
-            Text("仅前台模拟测试：检查指定耳机连接和预期路由，直接 speak；实际输出需听验，不替代真实短信的实际轨道路由门禁。")
-            audioModes.toSortedMap().forEach { (gain, result) ->
-                Text("${if (gain == 3) "模式 A" else "模式 B"} · ${result.id}", style = MaterialTheme.typography.titleMedium)
-                result.fields.forEach { (field, value) -> Text("$field：$value") }
-                Text("人工语音听验：${result.voiceHeard}；音乐响应：${result.musicResponse}；音乐恢复：${result.musicRecovery}")
-                val ready = result.fields["测试结束"] == "true"
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "语音", "完整有声") }) { Text("语音有声") }
-                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "语音", "无声或不完整") }) { Text("语音未成功") }
+        val sms = remember(currentRevision) { granted(Manifest.permission.RECEIVE_SMS) }
+        val bluetooth = remember(currentRevision) { granted(Manifest.permission.BLUETOOTH_CONNECT) }
+        var choosing by remember { mutableStateOf(false) }
+        val selectedName = devices.firstOrNull { matches(it, settings.selectedBluetoothDevice) }?.let { deviceName(it) }
+            ?: if (settings.selectedBluetoothDevice == null) "尚未选择耳机" else "已保存目标耳机（名称暂不可用）"
+        val status = Readiness.status(settings, sms, bluetooth, connected, routeReady, checking, speaking)
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
+            .verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("SMS Voice Assistant", style = MaterialTheme.typography.headlineSmall)
+            Section("运行状态") {
+                Text(status, style = MaterialTheme.typography.titleLarge)
+                Toggle("启用短信播报", "暂停会取消在途播报，并忽略之后的新短信。",
+                    settings.announcingEnabled, settings.announcingEnabled || (sms && bluetooth && settings.selectedBluetoothDevice != null)) {
+                    app.setAnnouncingEnabled(it)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val response = if (gain == 3) "已降低音量" else "已暂停"
-                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐响应", response) }) { Text(response) }
-                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐响应", "未降低/未暂停") }) { Text("音乐未响应") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐恢复", "已恢复") }) { Text("音乐已恢复") }
-                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐恢复", "未恢复") }) { Text("音乐未恢复") }
-                }
+                if (!sms || !bluetooth) Text("启用前请先授予短信和蓝牙权限。")
+                if (settings.selectedBluetoothDevice == null) Text("启用前请选择已配对耳机。")
+                Text("仅由新短信触发，无常驻服务。实际输出路由在播放时再次检查。", style = MaterialTheme.typography.bodySmall)
             }
-            OutlinedButton(onClick = { app.speak(OtpParser.TEST_TEXT, false) }) { Text("旧 PCM 链路对照（8 秒）") }
-            Text("旧链路：文件合成 → PCM → AudioTrack，不调用 speak；固定人工样例仍为原样例。")
-            OutlinedButton(onClick = { app.session?.cancel(); app.foregroundFocus?.cancel() }) { Text("取消并释放焦点") }
-            Text("焦点 / 短信时序诊断（最近 120 条，仅内存）", style = MaterialTheme.typography.titleMedium)
-            if (timeline.isEmpty()) Text("尚未执行焦点/短信链路")
-            timeline.forEach { Text(it) }
-            OutlinedButton(onClick = { app.resetSmsObservation() }) { Text("准备本轮短信观察（不发送短信）") }
-            smsState.forEach { (key, value) -> Text("短信 $key：$value") }
-            Text("独立 SMS 事件（最近 8 条，仅保存脱敏字段）", style = MaterialTheme.typography.titleMedium)
-            Text("普通短信只查广播；固定模板分别在前台和后台测。未出现编号仅表示尚未观察到广播，系统收信和 AudioHardening 需外部证据。")
-            smsEvents.asReversed().forEach { item ->
-                Text(item.id, style = MaterialTheme.typography.titleMedium)
-                item.fields.forEach { (field, value) -> Text("$field：$value") }
+            Section("短信播报规则") {
+                Toggle("仅播报验证码", "开启后，无法可靠识别的短信将忽略。", settings.otpOnlyEnabled) {
+                    app.settings.setOtpOnly(it); app.session?.cancel()
+                }
+                Toggle("精简验证码播报", if (settings.otpOnlyEnabled) "只读平台和验证码；数字逐位朗读。" else "全文模式下不可操作，原设置已保留。",
+                    settings.otpSimplifyEnabled, settings.otpOnlyEnabled) {
+                    app.settings.setSimplify(it); app.session?.cancel()
+                }
+                Text(when {
+                    !settings.otpOnlyEnabled -> "当前：所有新普通 SMS 全文播报"
+                    settings.otpSimplifyEnabled -> "当前：仅验证码，精简播报"
+                    else -> "当前：仅验证码，全文播报"
+                }, style = MaterialTheme.typography.bodyMedium)
+                Text("全文最多80个字符，完整语音最多5秒，且须满足8秒总预算。超限整条拒绝并显示状态，不截断。较长全文暂不支持。",
+                    style = MaterialTheme.typography.bodySmall)
             }
-            Text("最近事件 / TTS 状态：$event")
-            Text("最近短信广播：${app.prefs.getString("lastBroadcast", "未验证")}")
-            Text("最近后台执行：${app.prefs.getString("lastBackground", "未验证")}")
-            Text("仅回调不能证明实际听到、断网成功或音乐恢复。真实短信内容不显示、不保存。")
-            Text("诊断：未收到广播时，先查实际权限和安装器，再查特殊 OTP 分发及 OriginOS 后台策略。进程中止后只保留最后状态；没有完成状态应按失败或未验证处理。")
-            Text("状态刷新 $currentRevision；真实设备验收须按 docs/stage0-test-plan.md 手工记录。")
+            Section("蓝牙设备") {
+                Text(selectedName, style = MaterialTheme.typography.titleMedium)
+                Text(if (checking) "连接状态：检查中" else if (connected) "连接状态：已连接" else "连接状态：未连接或无法确认")
+                Text("预期音频路由：$routeStatus")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { refresh(); choosing = true }, enabled = bluetooth) { Text("更换耳机") }
+                    OutlinedButton(onClick = ::refresh) { Text("刷新") }
+                }
+                Text("只列出已配对设备；身份按已保存地址匹配。路由无法确认时拒绝播报。", style = MaterialTheme.typography.bodySmall)
+            }
+            Section("权限和系统设置") {
+                Text("短信权限：${if (sms) "已授予" else "未授予"}")
+                Text("蓝牙权限：${if (bluetooth) "已授予" else "未授予"}")
+                if (!sms || !bluetooth) Button(onClick = {
+                    permissions.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.BLUETOOTH_CONNECT))
+                }) { Text("申请必要权限") }
+                OutlinedButton(onClick = ::openAppSettings) { Text("应用权限设置") }
+                Text("拒绝授权后可从系统设置手动授权；短信权限还受安装器限制。返回本页会重新检查。", style = MaterialTheme.typography.bodySmall)
+                Toggle("开机后恢复工作状态", "开启：恢复上次启用/暂停状态。关闭：重启后暂停。", settings.bootRestoreEnabled) {
+                    app.settings.setBootRestore(it); app.session?.cancel()
+                }
+                OutlinedButton(onClick = ::openAppSettings) { Text("后台运行设置") }
+                Text("vivo OriginOS 7：请手动检查“允许后台高耗电”。阶段0测试中这是后台及时接收的重要条件，可能增加耗电。应用无法读取该设置：请手动确认。")
+                Text("Android 17后台音频仍受系统限制；系统设置不代表后台保活保证。", style = MaterialTheme.typography.bodySmall)
+            }
+            Section("语音测试") {
+                Text("固定文本：${SpeechFormatter.TEST_TEXT}")
+                Button(onClick = { app.speak(SpeechFormatter.TEST_TEXT, false) }, enabled = bluetooth && routeReady && !speaking) { Text("测试耳机语音") }
+                if (speaking) OutlinedButton(onClick = { app.session?.cancel() }) { Text("取消本次播报") }
+                Text("离线中文，指定耳机，音乐可降低音量。完成回调后仍需你确认实际听感。", style = MaterialTheme.typography.bodySmall)
+                Text("最近处理状态：$event")
+            }
+            if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                TextButton(onClick = {
+                    startActivity(Intent().setClassName(packageName, "$packageName.Stage0DiagnosticsActivity"))
+                }) { Text("开发诊断（阶段0历史工具）") }
+            }
+            Text("完全本地；不读取历史短信，不保存短信正文、验证码或语音。", style = MaterialTheme.typography.bodySmall)
         }
+        if (choosing) AlertDialog(onDismissRequest = { choosing = false }, title = { Text("选择已配对耳机") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (devices.isEmpty()) Text("暂无可用设备，请先在系统中配对并授予蓝牙权限。")
+                devices.forEachIndexed { index, device ->
+                    TextButton(onClick = {
+                        try { app.target = device.address; choosing = false; refresh() }
+                        catch (_: SecurityException) { app.event("蓝牙权限已撤销，请重新授权"); refresh() }
+                    }) { Text("${index + 1}. ${deviceName(device)}${if (matches(device, settings.selectedBluetoothDevice)) "（已选择）" else ""}") }
+                }
+            } }, confirmButton = { TextButton(onClick = { choosing = false }) { Text("关闭") } })
+    }
+}
+
+@Composable private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
+        }
+    }
+}
+
+@Composable private fun Toggle(label: String, detail: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked, onChange, enabled = enabled, modifier = Modifier.semantics { contentDescription = label })
     }
 }
