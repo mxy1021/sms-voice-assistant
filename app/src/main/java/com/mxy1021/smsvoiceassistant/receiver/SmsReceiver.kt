@@ -18,6 +18,10 @@ class SmsReceiver : BroadcastReceiver() {
         val receiveElapsed = SystemClock.elapsedRealtime()
         val receiveWall = System.currentTimeMillis()
         val app = context.applicationContext as ProbeApplication
+        if (!app.settings.snapshot().announcingEnabled) {
+            app.event("已暂停：新 SMS 不进入播报链路")
+            return
+        }
         val background = !app.visible
         if (app.session == null && app.foregroundFocus == null && !app.compatibilityTestActive) app.timeline.reset()
         val eventId = app.beginSmsEvent(receiveElapsed)

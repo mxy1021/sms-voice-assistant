@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
     @Composable private fun ProbeScreen() {
+        val settings by app.settings.state.collectAsState()
         val event by app.events.collectAsState()
         val currentRevision = revision
         val diagnostics by compatibility.diagnostics.collectAsState()
@@ -91,6 +92,10 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("SMS Voice Assistant · 阶段 0", style = MaterialTheme.typography.titleLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (settings.announcingEnabled) "已启用，等待短信" else "已暂停")
+                Switch(checked = settings.announcingEnabled, onCheckedChange = app::setAnnouncingEnabled)
+            }
             Text("系统 API ${Build.VERSION.SDK_INT}；target 34；compile 36")
             Text("系统默认中文 TTS 兼容性测试", style = MaterialTheme.typography.titleMedium)
             Text("请先关闭 Wi-Fi 和移动数据。此测试仅播放固定人工文本，按系统当前输出播放，可能使用扬声器；不检查蓝牙、不请求应用音频焦点。")

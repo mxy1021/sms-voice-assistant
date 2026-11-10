@@ -17,8 +17,18 @@ import android.app.ActivityManager
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.mxy1021.smsvoiceassistant.settings.SettingsRepository
+import com.mxy1021.smsvoiceassistant.settings.PreferenceSettingsStore
+import android.provider.Settings
 
 class ProbeApplication : Application() {
+    val settings by lazy { SettingsRepository(PreferenceSettingsStore(prefs),
+        Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)) }
+    val speaking = MutableStateFlow(false)
+    fun setAnnouncingEnabled(enabled: Boolean) {
+        settings.setEnabled(enabled)
+        if (!enabled) { session?.cancel(); foregroundFocus?.cancel() }
+    }
     val events = MutableStateFlow("尚未运行")
     val main = Handler(Looper.getMainLooper())
     var visible = false
@@ -31,6 +41,7 @@ class ProbeApplication : Application() {
     private val smsReceiveElapsed = mutableMapOf<String, Long>()
     override fun onCreate() {
         super.onCreate()
+        settings.snapshot()
         Stage0Log.state("process", "Application.onCreate", "新进程实例；不是设备标识")
         val lastExit = runCatching { getSystemService(ActivityManager::class.java)
             .getHistoricalProcessExitReasons(packageName, 0, 1).firstOrNull()?.reason }.getOrNull()
@@ -183,8 +194,8 @@ class ProbeApplication : Application() {
     }
     val prefs by lazy { getSharedPreferences("stage0", MODE_PRIVATE) }
     var target: String?
-        get() = prefs.getString("target", null)
-        set(value) { session?.cancel(); foregroundFocus?.cancel(); prefs.edit().putString("target", value).apply() }
+        get() = settings.snapshot().selectedBluetoothDevice
+        set(value) { settings.selectDevice(value); session?.cancel(); foregroundFocus?.cancel() }
     var mode: Int
         get() = prefs.getInt("focusMode", 3)
         set(value) { prefs.edit().putInt("focusMode", value).apply() }
@@ -210,12 +221,17 @@ class ProbeApplication : Application() {
             }
             event("忙碌，本次拒绝播报", background); finished(); return
         }
-        val next = SpeechSession(this, background, mode, fromSms, smsEventId) {
+        if (fromSms && !settings.snapshot().announcingEnabled) {
+            smsFinished(); finished(); return
+        }
+        val next = SpeechSession(this, background, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, fromSms, smsEventId) {
             session = null
+            speaking.value = false
             if (fromSms) smsFinished()
             finished()
         }
         session = next
+        speaking.value = true
         next.start(text)
     }
 }

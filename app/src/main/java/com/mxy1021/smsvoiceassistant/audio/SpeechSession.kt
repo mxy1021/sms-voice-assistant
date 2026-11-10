@@ -28,6 +28,9 @@ class SpeechSession(
     private val main = app.main
     private val audio = app.getSystemService(AudioManager::class.java)
     private val target = app.target
+    private val permit = app.settings.permit(fromSms)
+    private fun authorized() = permit?.let { app.settings.valid(it) } == true && permitted() &&
+        (!fromSms || app.checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED)
     private var tts: TextToSpeech? = null
     private var sink: ParcelFileDescriptor? = null
     private var focus: AudioFocusRequest? = null
@@ -53,6 +56,7 @@ class SpeechSession(
     }
     private fun alive(next: String): Boolean {
         if (ended) return false
+        if (!authorized()) { end("运行状态、配置或权限已改变，取消播报"); return false }
         if (!SmsSafetyWindow.withinBudget(startElapsed, SystemClock.elapsedRealtime())) {
             stage = "elapsedRealtime预算超时：$next"
             mark("超时退出")
@@ -320,9 +324,12 @@ class SpeechSession(
                             main.post { if (!ended) { stage = "PCM写入elapsed超时"; mark("超时退出"); end("写入前预算已过期，丢弃语音") } }
                             break
                         }
-                        if (!matches(player.routedDevice)) { main.post { end("播放中路由改变，立即取消") }; break }
-                        val count = player.write(data, offset, minOf(2048, data.size - offset), AudioTrack.WRITE_BLOCKING)
-                        if (count <= 0) { main.post { end("PCM 写入失败") }; break }
+                        val count = permit?.let { token -> app.settings.withPermit(token) {
+                            if (ended || !authorized() || !matches(player.routedDevice)) -1
+                            else player.write(data, offset, minOf(2048, data.size - offset), AudioTrack.WRITE_NON_BLOCKING)
+                        } } ?: -1
+                        if (count < 0) { main.post { end("运行状态、权限或路由改变，取消 PCM 写入") }; break }
+                        if (count == 0) { Thread.sleep(10); continue }
                         if (offset == 0) {
                             val writtenAt = SystemClock.elapsedRealtime()
                             main.post { mark("音频实际写入", writtenAt) }
