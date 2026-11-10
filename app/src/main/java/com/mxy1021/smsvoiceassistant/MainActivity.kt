@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.mxy1021.smsvoiceassistant.bluetooth.BluetoothProbe
 import com.mxy1021.smsvoiceassistant.sms.OtpParser
 import com.mxy1021.smsvoiceassistant.audio.TtsCompatibilityProbe
+import com.mxy1021.smsvoiceassistant.audio.ForegroundFocusTest
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
@@ -38,6 +39,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() { super.onStart(); app.visible = true; revision++ }
     override fun onStop() {
         compatibility.cancel()
+        if (app.foregroundFocus != null) app.timeline.add("Activity.onStop：取消前台最小焦点测试")
+        app.foregroundFocus?.cancel()
         offlineConfirmed = false
         app.visible = false
         super.onStop()
@@ -47,7 +50,9 @@ class MainActivity : ComponentActivity() {
         app.compatibilityTestActive = false
     }
     private fun testCompatibility() {
-        if (!offlineConfirmed || compatibilityRunning || app.session != null || !app.visible) return
+        if (!offlineConfirmed || compatibilityRunning || app.session != null || app.foregroundFocus != null || !app.visible) {
+            app.timeline.add("兼容性测试按钮未启动：断网未确认、非前台或另一测试忙碌"); return
+        }
         compatibility = newCompatibilityProbe()
         compatibilityRunning = true
         app.compatibilityTestActive = true
@@ -55,13 +60,18 @@ class MainActivity : ComponentActivity() {
         compatibility.start()
     }
     override fun onDestroy() {
-        if (app.session?.background == false) app.session?.cancel()
+        if (app.session?.background == false) {
+            app.timeline.add("Activity.onDestroy：取消尚未结束的前台原 PCM 会话")
+            app.session?.cancel()
+        }
         super.onDestroy()
     }
     @Composable private fun ProbeScreen() {
         val event by app.events.collectAsState()
         val currentRevision = revision
         val diagnostics by compatibility.diagnostics.collectAsState()
+        val timeline by app.timeline.entries.collectAsState()
+        val smsState by app.smsState.collectAsState()
         fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
         var devices by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
         var route by remember { mutableStateOf("未检测") }
@@ -77,7 +87,7 @@ class MainActivity : ComponentActivity() {
                 Checkbox(checked = offlineConfirmed, onCheckedChange = { offlineConfirmed = it }, enabled = !compatibilityRunning)
                 Text("我已关闭 Wi-Fi 和移动数据（人工确认，APP 无法核实）")
             }
-            Button(onClick = { testCompatibility() }, enabled = offlineConfirmed && !compatibilityRunning && app.session == null) {
+            Button(onClick = { testCompatibility() }, enabled = offlineConfirmed && !compatibilityRunning && app.session == null && app.foregroundFocus == null) {
                 Text("系统默认中文 TTS 兼容性测试")
             }
             Text("固定测试文本：${TtsCompatibilityProbe.TEST_TEXT}")
@@ -107,13 +117,23 @@ class MainActivity : ComponentActivity() {
             Text("蓝牙 / 音频路由：$route")
             Text("TTS：每次测试冷启动并检查离线简体中文资源；结果见下方事件。")
             Text("模式：${if (mode == AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK) "A 降低音乐音量" else "B 请求暂停音乐"}")
+            Text("模式在每次启动时固定；播放中切换只影响下一次。")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { mode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK; app.mode = mode }) { Text("模式 A") }
                 OutlinedButton(onClick = { mode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT; app.mode = mode }) { Text("模式 B") }
             }
             Button(onClick = { app.speak(OtpParser.TEST_TEXT, false) }) { Text("离线中文 / 焦点测试") }
+            Text("原链路：synthesizeToFile → PCM → AudioTrack，8 秒总预算；不调用 speak。")
             Text("固定合成样例：${OtpParser.TEST_TEXT}")
-            OutlinedButton(onClick = { app.session?.cancel() }) { Text("取消并释放焦点") }
+            Button(onClick = { app.startForegroundFocusTest() }) { Text("前台最小焦点播放测试") }
+            Text("固定新句：${ForegroundFocusTest.TEST_TEXT}")
+            Text("仅前台模拟测试：检查指定耳机连接和预期路由，直接 speak；实际输出需听验，不替代真实短信的实际轨道路由门禁。")
+            OutlinedButton(onClick = { app.session?.cancel(); app.foregroundFocus?.cancel() }) { Text("取消并释放焦点") }
+            Text("焦点 / 短信时序诊断（最近 120 条，仅内存）", style = MaterialTheme.typography.titleMedium)
+            if (timeline.isEmpty()) Text("尚未执行焦点/短信链路")
+            timeline.forEach { Text(it) }
+            OutlinedButton(onClick = { app.resetSmsObservation() }) { Text("准备本轮短信观察（不发送短信）") }
+            smsState.forEach { (key, value) -> Text("短信 $key：$value") }
             Text("最近事件 / TTS 状态：$event")
             Text("最近短信广播：${app.prefs.getString("lastBroadcast", "未验证")}")
             Text("最近后台执行：${app.prefs.getString("lastBackground", "未验证")}")

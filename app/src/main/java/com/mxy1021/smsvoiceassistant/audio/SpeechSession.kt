@@ -19,6 +19,8 @@ import java.util.concurrent.Executors
 class SpeechSession(
     private val app: ProbeApplication,
     val background: Boolean,
+    private val focusMode: Int,
+    private val fromSms: Boolean,
     private val finished: () -> Unit
 ) {
     private val main = app.main
@@ -36,7 +38,15 @@ class SpeechSession(
     @Volatile private var ended = false
     private var playing = false
     private var receiverRegistered = false
-    private val timeout = Runnable { end("超时取消，焦点已释放；本次失败") }
+    private var stage = "蓝牙/预期路由"
+    private var synthesisStarted = false
+    private var synthesisDone = false
+    private var playbackDone = false
+    private var synthesisRequested = false
+    private var focusGranted = false
+    private fun log(value: String) = app.timeline.add(value)
+    private fun sms(key: String, value: String) { if (fromSms) app.smsStatus(key, value) }
+    private val timeout = Runnable { end("8 秒总预算超时；合成请求=$synthesisRequested，onStart=$synthesisStarted，合成完成=$synthesisDone，播放完成=$playbackDone") }
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             if (removedDevices.any { it.id == track?.routedDevice?.id || it.address.equals(target, true) })
@@ -55,6 +65,9 @@ class SpeechSession(
     }
 
     fun start(text: String) {
+        log("原 PCM 焦点测试开始；模式=${if (focusMode == AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK) "A" else "B"}，gain=$focusMode；8 秒包含冷初始化")
+        log("tts.speak=不调用；请求路径=synthesizeToFile(/dev/null) → PCM → 焦点 → AudioTrack；与直接 speak 不同")
+        log("独立创建新 TTS，不复用兼容性实例；焦点回调及 stop/abandon 在本时序记录")
         // 包含蓝牙查询、冷启动合成和播放在内总计最多 8 秒。
         main.postDelayed(timeout, 8000)
         try {
@@ -63,6 +76,10 @@ class SpeechSession(
             audio.registerAudioDeviceCallback(deviceCallback, main)
             BluetoothProbe(app).inspect(target) { result ->
                 if (!ended) {
+                    log("目标蓝牙已连接=${result.connected}；预期音频路由=${result.status}")
+                    log("播放前置条件=${result.output != null}")
+                    sms("蓝牙", if (result.connected) "目标设备已连接" else "模板已匹配，目标设备未连接或连接无法确认")
+                    sms("路由", result.status)
                     if (result.output == null) end(result.status)
                     else initialize(text, result.output)
                 }
@@ -71,16 +88,21 @@ class SpeechSession(
     }
 
     private fun initialize(text: String, output: AudioDeviceInfo) {
+        stage = "TTS 初始化"
+        log("开始初始化 TTS（默认引擎）")
         app.event("TTS 初始化中", background)
         tts = TextToSpeech(app) { status ->
             main.post {
                 if (!ended) {
                     try {
                         val engine = tts ?: error("未初始化")
+                        log("OnInit=$status")
                         if (status != TextToSpeech.SUCCESS) {
                             end("严格 TTS 初始化失败，OnInit=$status"); return@post
                         }
+                        stage = "严格中文语言/Voice 筛选"
                         val available = engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE)
+                        log("isLanguageAvailable(zh-CN)=$available；原路径未调用 setLanguage")
                         if (available < 0) {
                             end("严格中文语言检测失败，返回值=$available"); return@post
                         }
@@ -91,22 +113,35 @@ class SpeechSession(
                             it.locale.language == "zh" && it.locale.country == "CN" && !it.isNetworkConnectionRequired &&
                                 "notInstalled" !in it.features.orEmpty()
                         }
+                        log("getVoices数量=${voices?.size ?: "未知"}；严格离线候选=${voice != null}")
                         if (voice == null) {
                             end("严格筛选未找到可确认的离线中文 Voice；中文能力未知，请运行手动兼容性测试"); return@post
                         }
                         val voiceResult = engine.setVoice(voice)
+                        log("setVoice=$voiceResult")
                         if (voiceResult != TextToSpeech.SUCCESS) {
                             end("严格 TTS 设置 Voice 失败，返回值=$voiceResult"); return@post
                         }
-                        if (engine.setAudioAttributes(BluetoothProbe.attributes) != TextToSpeech.SUCCESS) {
+                        stage = "TTS 音频属性"
+                        val attributes = engine.setAudioAttributes(BluetoothProbe.attributes)
+                        log("TTS setAudioAttributes=$attributes；预期路由/TTS/焦点/AudioTrack 均为 MEDIA + SPEECH")
+                        if (attributes != TextToSpeech.SUCCESS) {
                             end("TTS 音频属性设置失败"); return@post
                         }
                         app.event("离线中文资源已选择；开始内存合成（仍需断网听验）", background)
-                        engine.setOnUtteranceProgressListener(listener(output))
+                        val listenerResult = engine.setOnUtteranceProgressListener(listener(output))
+                        log("设置 UtteranceProgressListener=$listenerResult")
+                        if (listenerResult != TextToSpeech.SUCCESS) { end("设置合成监听器失败"); return@post }
                         // /dev/null 为系统丢弃设备，不生成文件；PCM 仅经回调留在内存。
                         // 不使用不支持回填 WAV 头的管道，也不缓存真实验证码音频。
+                        stage = "文件合成/PCM 回调"
                         sink = ParcelFileDescriptor.open(File("/dev/null"), ParcelFileDescriptor.MODE_WRITE_ONLY)
-                        if (engine.synthesizeToFile(text, Bundle(), sink!!, "stage0") != TextToSpeech.SUCCESS)
+                        synthesisRequested = true
+                        log("调用 synthesizeToFile；尚未申请焦点，不调用 tts.speak")
+                        val request = engine.synthesizeToFile(text, Bundle(), sink!!, "stage0")
+                        log("synthesizeToFile 返回=$request")
+                        sms("TTS", "已请求文件合成，speak 未使用；等待合成回调")
+                        if (request != TextToSpeech.SUCCESS)
                             end("TTS 合成请求失败")
                     } catch (_: Exception) { end("TTS 引擎或丢弃设备不兼容，本次失败") }
                 }
@@ -115,9 +150,15 @@ class SpeechSession(
     }
 
     private fun listener(output: AudioDeviceInfo) = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String) { main.post { if (!ended) app.event("TTS 合成开始", background) } }
+        override fun onStart(utteranceId: String) { main.post { if (!ended) {
+            synthesisStarted = true
+            log("onStart：文件合成开始，不代表已经播放")
+            sms("TTS", "TTS 合成已启动，尚未确认音频播放完成")
+            app.event("TTS 合成开始", background)
+        } } }
         override fun onBeginSynthesis(utteranceId: String, sampleRateInHz: Int, audioFormat: Int, channelCount: Int) {
             synchronized(pcm) { rate = sampleRateInHz; encoding = audioFormat; channels = channelCount }
+            main.post { if (!ended) log("onBeginSynthesis：rate=$sampleRateInHz，format=$audioFormat，channels=$channelCount") }
         }
         override fun onAudioAvailable(utteranceId: String, audio: ByteArray) {
             synchronized(pcm) {
@@ -128,13 +169,17 @@ class SpeechSession(
         }
         override fun onDone(utteranceId: String) {
             main.post {
-                if (!ended) try { play(output) } catch (_: Exception) { end("音频播放初始化失败") }
+                if (!ended) try {
+                    synthesisDone = true
+                    log("onDone：文件合成完成，PCM字节数=${synchronized(pcm) { pcm.size() }}；接下来才申请焦点与播放")
+                    play(output)
+                } catch (_: Exception) { end("音频播放初始化失败") }
             }
         }
         @Deprecated("兼容旧引擎回调")
-        override fun onError(utteranceId: String) { main.post { end("TTS 合成失败") } }
-        override fun onError(utteranceId: String, errorCode: Int) { main.post { end("TTS 合成失败") } }
-        override fun onStop(utteranceId: String, interrupted: Boolean) { main.post { end("TTS 被取消") } }
+        override fun onError(utteranceId: String) { main.post { if (!ended) { log("onError：错误码未知"); end("TTS 合成失败") } } }
+        override fun onError(utteranceId: String, errorCode: Int) { main.post { if (!ended) { log("onError=$errorCode"); end("TTS 合成失败，错误码=$errorCode") } } }
+        override fun onStop(utteranceId: String, interrupted: Boolean) { main.post { if (!ended) { log("onStop：interrupted=$interrupted"); end("TTS 被取消") } } }
     }
 
     private fun permitted() = app.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -142,20 +187,31 @@ class SpeechSession(
         BluetoothProbe.bluetooth(device) && RoutePolicy.matches(target, listOf(device.address))
 
     private fun play(output: AudioDeviceInfo) {
+        stage = "PCM 格式校验"
         val data = synchronized(pcm) { pcm.toByteArray().also { pcm.reset() } }
         if (rate !in 8000..48000 || channels !in 1..2 ||
             encoding != AudioFormat.ENCODING_PCM_16BIT || data.isEmpty()) {
             data.fill(0); end("引擎未返回支持的 PCM，拒绝播报"); return
         }
-        focus = AudioFocusRequest.Builder(app.mode)
+        log("PCM 格式校验通过；当前才开始请求焦点")
+        stage = "音频焦点"
+        focus = AudioFocusRequest.Builder(focusMode)
             .setAudioAttributes(BluetoothProbe.attributes)
             .setAcceptsDelayedFocusGain(false)
             .setOnAudioFocusChangeListener({ change ->
-                if (change != AudioManager.AUDIOFOCUS_GAIN) end("焦点丢失，取消播报")
+                if (!ended) {
+                    log("onAudioFocusChange=$change")
+                    if (change != AudioManager.AUDIOFOCUS_GAIN) end("焦点丢失，取消播报")
+                }
             }, main).build()
-        if (audio.requestAudioFocus(focus!!) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        val focusResult = audio.requestAudioFocus(focus!!)
+        log("requestAudioFocus=$focusResult（1=授予，0=失败，2=延迟）")
+        sms("焦点", if (focusResult == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "焦点已获得；等待实际播放" else "蓝牙/预期路由满足，但焦点申请失败：$focusResult")
+        if (focusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             data.fill(0); end("音频焦点申请失败，拒绝播报"); return
         }
+        focusGranted = true
+        stage = "AudioTrack 初始化/静音实际路由"
         app.event("焦点已获得；播放器降低音量或暂停及恢复仍待听验", background)
         val mask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
         val minimum = AudioTrack.getMinBufferSize(rate, mask, encoding)
@@ -164,7 +220,9 @@ class SpeechSession(
             .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(mask).setEncoding(encoding).build())
             .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(minimum, rate * channels / 5 * 2)).build()
         track = player
-        if (!player.setPreferredDevice(output)) { data.fill(0); end("指定输出设备失败"); return }
+        val preferred = player.setPreferredDevice(output)
+        log("AudioTrack setPreferredDevice=$preferred")
+        if (!preferred) { data.fill(0); end("指定输出设备失败"); return }
         // 先播放 100ms 静音，实际路由未确认前不向轨道写入验证码 PCM。
         val silence = ByteArray(rate / 10 * channels * 2)
         val silenceWritten = player.write(silence, 0, silence.size, AudioTrack.WRITE_NON_BLOCKING)
@@ -172,11 +230,21 @@ class SpeechSession(
         var submitted = false
         fun submit() {
             if (ended || submitted) return
-            if (!matches(player.routedDevice)) { data.fill(0); end("实际播放路由无法确认，拒绝播报"); return }
+            val matched = matches(player.routedDevice)
+            log("静音轨道实际路由匹配=$matched；未匹配前不写入语音 PCM")
+            if (!matched) { data.fill(0); end("实际播放路由无法确认，拒绝播报"); return }
             submitted = true
             playing = true
+            stage = "AudioTrack 播放/完成回调"
+            sms("TTS", "焦点成功，合成已完成，AudioTrack 播放中；尚未完成")
             player.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
-                override fun onMarkerReached(track: AudioTrack) { end("播放完成回调已到达，焦点已释放；听验待人工记录") }
+                override fun onMarkerReached(track: AudioTrack) {
+                    if (!ended) {
+                        playbackDone = true
+                        log("AudioTrack 播放标记完成")
+                        end("播放完成回调已到达，焦点已释放；听验待人工记录")
+                    }
+                }
                 override fun onPeriodicNotification(track: AudioTrack) { }
             }, main)
             player.notificationMarkerPosition = (silenceWritten + data.size) / (channels * 2)
@@ -196,6 +264,7 @@ class SpeechSession(
         }
         player.addOnRoutingChangedListener({ if (submitted) verifyLiveRoute() else submit() }, main)
         player.play()
+        log("AudioTrack.play 已执行；等待实际路由，随后写入 PCM")
         main.postDelayed({ submit() }, 250)
     }
 
@@ -205,19 +274,37 @@ class SpeechSession(
         if (ended) return
         ended = true
         main.removeCallbacks(timeout)
+        log("最终失败阶段=${if (playbackDone) "无" else stage}；$code")
+        log("状态汇总：tts.speak未使用，合成请求=$synthesisRequested，onStart=$synthesisStarted，onDone(合成)=$synthesisDone，播放完成=$playbackDone")
+        if (track != null) log("调用 AudioTrack.stop/flush/release；播放完成前=${!playbackDone}；原因=$code")
         runCatching { track?.stop() }
         runCatching { track?.flush() }
         runCatching { track?.release() }
         track = null
         val focusReleased = focus?.let {
+            log("调用 abandonAudioFocusRequest：合成onDone前=${!synthesisDone}，实际播放完成前=${!playbackDone}；原因=$code")
             runCatching { audio.abandonAudioFocusRequest(it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }.getOrDefault(false)
         } ?: true
-        runCatching { tts?.stop(); tts?.shutdown() }
+        log(if (focus == null) "未申请焦点，未调用 abandonAudioFocusRequest" else "焦点释放成功=$focusReleased")
+        if (tts != null) {
+            log("调用 tts.stop：合成请求前=${!synthesisRequested}，合成onDone前=${!synthesisDone}，实际播放完成前=${!playbackDone}；原因=$code")
+            log("tts.stop 返回=${runCatching { tts!!.stop() }.getOrNull() ?: "异常"}")
+            log("调用 tts.shutdown；${runCatching { tts!!.shutdown(); "完成" }.getOrDefault("异常")}")
+        } else log("未创建 TTS，没有调用 stop/shutdown")
         runCatching { sink?.close() }
         runCatching { audio.unregisterAudioDeviceCallback(deviceCallback) }
         if (receiverRegistered) runCatching { app.unregisterReceiver(disconnect) }
         synchronized(pcm) { pcm.reset() }
         worker.shutdownNow()
+        sms("TTS", when {
+            playbackDone -> "合成和播放完成回调已到达；实际耳机听验待记录"
+            synthesisStarted -> "TTS 合成已启动但播放未完成；失败阶段=$stage"
+            focusGranted -> "焦点成功但 TTS/播放未启动；失败阶段=$stage"
+            else -> "TTS/播放未启动或未收到启动回调；失败阶段=$stage"
+        })
+        if (fromSms && background && !playbackDone)
+            sms("后台", "后台处理未完成，最后阶段=$stage；可能是代码/引擎/系统限制，原因未确认")
+        if (fromSms && background && playbackDone) sms("后台", "本次后台完成回调已到达；真实听验仍须记录")
         app.event(if (focusReleased) code else "焦点释放失败或状态未确认，本次失败", background)
         finished()
     }

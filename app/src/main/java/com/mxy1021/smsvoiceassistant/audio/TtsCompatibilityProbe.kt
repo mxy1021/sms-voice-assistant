@@ -29,6 +29,7 @@ class TtsCompatibilityProbe(context: Context, private val finished: () -> Unit) 
         "setVoice 结果" to "未知", "当前选择 Voice" to "未知", "speak 返回值" to "未知",
         "回调" to "尚未收到", "失败阶段 / 错误码" to "无", "资源释放" to "尚未执行",
         "诊断查询异常" to "无",
+        "音频属性" to "引擎默认（未显式设置）；最小焦点测试使用 MEDIA / SPEECH，作为对照变量",
         "离线结论" to "待验证：须关闭 Wi-Fi 和移动数据并现场听验"
     )
     val diagnostics = MutableStateFlow(fields.toMap())

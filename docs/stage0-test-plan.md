@@ -112,7 +112,7 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 
 ## AIService 兼容性专项（前台、手动、固定文本）
 
-用户已报告 vivo X200 Pro / OriginOS 7 的系统首选 AIService TTS，在中文（中国）设置下联网与关闭 Wi-Fi、移动数据后均能朗读。此证据只代表系统测试，不等于本 APP 的 Voice 枚举、合成、路由或后台通过；本专项结果全部待验证。
+用户最新确认：vivo X200 Pro / OriginOS 7 的本 APP 兼容性手动测试，在关闭 Wi-Fi、移动数据后新句从指定蓝牙耳机成功输出；初始化、getVoices、setLanguage/setVoice/speak 和 onBeginSynthesis/onStart/onDone 正常。基础直接 speak 已成立；文件合成/PCM/严格实际路由、焦点和后台不能据此判通过。
 
 1. 安装最新 Debug APK，进入应用前台。不需要先授权短信或蓝牙、不需要先选耳机。停止音乐及原有严格测试，保持本页可见。
 2. 手动关闭 Wi-Fi 和移动数据，保留蜂窝短信能力；APP 不申请联网/网络状态权限，不能自动证明断网。勾选“我已关闭 Wi-Fi 和移动数据”。
@@ -128,10 +128,34 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 
 | 用例 | 条件/目标 | 实际结果 |
 |---|---|---|
-| T01 | AIService 默认引擎，断网，前台手动新句 | 待验证 |
+| T01 | AIService 默认引擎，断网，前台手动新句 | 用户确认通过；实际从指定蓝牙耳机输出 |
 | T02 | 枚举为空/未知，但 setLanguage 明确成功 | 待验证；纯逻辑允许不代表设备成功 |
 | T03 | 语言设置失败或初始化失败 | 待验证；应显示阶段和原始码，不播放 |
 | T04 | 停止、Home、超时、重复启动 | 待验证；取消并释放，不后台继续 |
-| T05 | 随后严格蓝牙/焦点，再后台短信 | 待验证；保持原有安全门禁 |
+| T05 | 随后严格蓝牙/焦点，再后台短信 | 原焦点按钮 A/B 无声；后台短信待验证 |
 
 依据：[setLanguage 与近似 Locale 匹配](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setLanguage(java.util.Locale))、[默认引擎字段含义](https://developer.android.com/reference/android/speech/tts/TextToSpeech#getDefaultEngine())、[Voice 网络要求元数据](https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired())。枚举和标记是诊断信息，不能代替本机断网播放实测。
+
+## 焦点无声专项复测
+
+保留已确认的基础直接 speak 结果，先排查前台，不启动后台短信。安装本次 APK 后读取并选择同一耳机，确认蓝牙连接和预期媒体输出。保持断网、应用在前台。
+
+1. 选模式 A，点击 **“前台最小焦点播放测试”**，应听到“前台焦点测试，验证码六八三一九五。”。等待完成后选 B 再测。此按钮使用独立 TTS，检查耳机/预期路由并直接 speak，不使用 PCM 中转，最长 30 秒。实际耳机输出仍需听验，不能仅以预期路由代替。
+2. 每次保留“焦点 / 短信时序诊断”的完整本轮顺序：开始及 gain（A=3、B=2）、连接、预期路由、前置条件、初始化/中文、属性、requestAudioFocus、onAudioFocusChange（可能没有）、真正执行 speak 及返回值、onBeginSynthesis/onStart/onDone/onError/onStop、最终阶段、stop/shutdown 和 abandon 的时点与原因。没有某个回调就是未观测到，不能补造。
+3. 没听到时，优先看最后阶段。焦点返回 0/2 应拒绝播放；返回 1 且 speak=0 但无回调或无声，要按 TTS/属性/输出阶段继续定位。不要直接认定引擎坏了或焦点申请必定失败。基础兼容性采用引擎默认属性，新测试采用 MEDIA/SPEECH，二者差异已显示。
+4. 再点击旧 **“离线中文 / 焦点测试”** 作对照。它明确显示“不调用 speak”，在合成 onDone/PCM 合格后才申请焦点；若日志停在 Voice、文件合成、PCM 或 8 秒超时，说明尚不能指控焦点请求。它的 onDone 是文件合成结束，必须等 AudioTrack 播放标记才算该路径播放完成。
+5. 两种模式分别在音乐播放时测 3 轮，记录降低音量/暂停及结束后的恢复；再测取消、离开前台、断开耳机、切换非目标输出、未选设备。正常最小测试须在 speak onDone 后释放；异常/取消/超时早于 onDone 释放是预期清理，必须附原因。模式在启动时固定，中途切换只用于下轮。
+6. 前台最小链路成功后，点击 **“准备本轮短信观察（不发送短信）”**，由另一端发送真实新 SMS。分别做普通不匹配文本、受控模板、耳机未连、输出不匹配，再做前台/后台/划走/锁屏。查看广播/解析/模板/蓝牙/路由/焦点/TTS/后台八栏，并对照时间线。报告只记阶段和结果，不记真实内容。
+
+进程重启只能恢复最后脱敏阶段；“上次没有终结记录”表示未完成，可能是进程中止、引擎或其他问题，系统后台限制须外部证据确认。未观察到广播时先核对手机实际收 SMS、授权、安装方式、强停和特殊 OTP 分发；不能从无日志推断代码已运行。
+
+| 用例 | 预期 | 结果 |
+|---|---|---|
+| F01/F02 | 最小直接 speak，A/B 各自完成、仅目标耳机有声 | 待真机验证 |
+| F03 | 原 PCM 路径显示具体退出阶段 | 待真机定位；旧版无声已确认 |
+| F04 | 音乐实际响应并在结束/取消后恢复 | 待真机验证 |
+| F05 | 未连接/错误路由/忙碌时明确拒绝 | 待真机验证 |
+| F06 | Home/取消/断连时立即取消最小测试并释放 | 待真机验证 |
+| F07 | 短信阶段逐项可辨，后台失败不虚构原因 | 待真实短信验证 |
+
+官方说明：[synthesizeToFile](https://developer.android.com/reference/android/speech/tts/TextToSpeech#synthesizeToFile(java.lang.CharSequence,%20android.os.Bundle,%20android.os.ParcelFileDescriptor,%20java.lang.String)) 与 [onDone](https://developer.android.com/reference/android/speech/tts/UtteranceProgressListener#onDone(java.lang.String)) 区分文件合成结束和 speak 播放结束；[音频焦点](https://developer.android.com/media/optimize/audio-focus) 要求请求与播放属性一致，焦点结果与播放器实际行为分别核验。
