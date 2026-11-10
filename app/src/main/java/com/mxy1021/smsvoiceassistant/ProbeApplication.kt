@@ -10,6 +10,10 @@ import com.mxy1021.smsvoiceassistant.audio.AudioModeResult
 import com.mxy1021.smsvoiceassistant.audio.Stage0Log
 import com.mxy1021.smsvoiceassistant.sms.SmsDiagnosticEvent
 import android.os.Build
+import android.os.SystemClock
+import android.os.PowerManager
+import android.app.KeyguardManager
+import android.app.ActivityManager
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +28,29 @@ class ProbeApplication : Application() {
     val timeline = DiagnosticTimeline(sink = { Stage0Log.state("timeline", "step", it) })
     val audioModeResults = MutableStateFlow<Map<Int, AudioModeResult>>(emptyMap())
     private var audioSequence = 0
+    private val smsReceiveElapsed = mutableMapOf<String, Long>()
+    override fun onCreate() {
+        super.onCreate()
+        Stage0Log.state("process", "Application.onCreate", "新进程实例；不是设备标识")
+        val lastExit = runCatching { getSystemService(ActivityManager::class.java)
+            .getHistoricalProcessExitReasons(packageName, 0, 1).firstOrNull()?.reason }.getOrNull()
+        Stage0Log.state("process", "上次退出原因码", lastExit?.toString() ?: "未知")
+    }
+    fun environment(id: String?, stage: String) {
+        val memory = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(memory)
+        Stage0Log.state("context", stage,
+            "ActivityStarted=$visible；interactive=${getSystemService(PowerManager::class.java).isInteractive}；" +
+                "keyguard=${getSystemService(KeyguardManager::class.java).isKeyguardLocked}；importance=${memory.importance}", id)
+    }
+    fun smsTime(id: String?, stage: String, atElapsed: Long = SystemClock.elapsedRealtime()) {
+        Stage0Log.timing(id, stage, atElapsed, id?.let { smsReceiveElapsed[it] })
+        if (id != null) {
+            updateSmsEvent(id, "t.$stage", atElapsed.toString())
+            smsReceiveElapsed[id]?.let { updateSmsEvent(id, "d.$stage", (atElapsed - it).toString()) }
+        }
+    }
+    fun receivedAt(id: String?) = id?.let { smsReceiveElapsed[it] }
     val smsEvents by lazy {
         val restored = runCatching {
             val array = JSONArray(prefs.getString("smsEvents", "[]"))
@@ -47,10 +74,12 @@ class ProbeApplication : Application() {
         }
         prefs.edit().putString("smsEvents", data.toString()).apply()
     }
-    fun beginSmsEvent(): String {
+    fun beginSmsEvent(receiveElapsed: Long = SystemClock.elapsedRealtime()): String {
         val sequence = prefs.getLong("smsSequence", 0) + 1
         prefs.edit().putLong("smsSequence", sequence).apply()
         val id = "SMS-${sequence.toString().padStart(6, '0')}"
+        smsReceiveElapsed[id] = receiveElapsed
+        while (smsReceiveElapsed.size > 16) smsReceiveElapsed.remove(smsReceiveElapsed.keys.first())
         val fields = listOf("解析", "模板", "验证码格式", "目标耳机连接", "预期路由", "实际路由", "requestAudioFocus", "onStart", "onDone", "onError")
             .associateWith { "未执行/未观测" } + mapOf(
                 "SMS_RECEIVED" to "已触发", "APP前台" to visible.toString(),
@@ -63,6 +92,8 @@ class ProbeApplication : Application() {
         saveSmsEvents()
         Stage0Log.state("sms", "SMS_RECEIVED", "已触发；APP前台=$visible；API=${Build.VERSION.SDK_INT}", id)
         timeline.add("[$id] SMS_RECEIVED 已触发，APP前台=$visible，API=${Build.VERSION.SDK_INT}")
+        smsTime(id, "BroadcastReceiver.onReceive", receiveElapsed)
+        environment(id, "onReceive状态")
         return id
     }
     fun updateSmsEvent(id: String?, field: String, value: String) {
@@ -73,6 +104,7 @@ class ProbeApplication : Application() {
         timeline.add("[$id] $field=$value")
     }
     fun finishSmsEvent(id: String) {
+        smsTime(id, "PendingResult.finish")
         updateSmsEvent(id, "接收器finish", "已调用，时间=${System.currentTimeMillis()}")
     }
     fun startAudioModeTest(selectedMode: Int) {

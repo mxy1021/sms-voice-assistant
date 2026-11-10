@@ -9,14 +9,18 @@ import android.provider.Telephony
 import com.mxy1021.smsvoiceassistant.ProbeApplication
 import com.mxy1021.smsvoiceassistant.sms.OtpParser
 import com.mxy1021.smsvoiceassistant.sms.SmsDiagnosticFormat
+import com.mxy1021.smsvoiceassistant.sms.SmsSafetyWindow
+import android.os.SystemClock
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        val receiveElapsed = SystemClock.elapsedRealtime()
+        val receiveWall = System.currentTimeMillis()
         val app = context.applicationContext as ProbeApplication
         val background = !app.visible
         if (app.session == null && app.foregroundFocus == null && !app.compatibilityTestActive) app.timeline.reset()
-        val eventId = app.beginSmsEvent()
+        val eventId = app.beginSmsEvent(receiveElapsed)
         app.timeline.add("真实 SMS 广播已到达；后台=$background（不记录内容）")
         app.smsStatus("广播", "已到达；后台=$background；时间=${System.currentTimeMillis()}")
         listOf("解析", "模板", "蓝牙", "路由", "焦点", "TTS").forEach { app.smsStatus(it, "本条尚未执行") }
@@ -31,6 +35,7 @@ class SmsReceiver : BroadcastReceiver() {
         app.event("短信广播已到达（未保存内容）", background)
         app.prefs.edit().putString("lastBroadcast", "${System.currentTimeMillis()}：短信广播已到达（内容未保存）").apply()
         val pending = goAsync()
+        app.smsTime(eventId, "goAsync开始")
         app.prefs.edit().putBoolean("smsPending", true).apply()
         var finished = false
         val finish = {
@@ -39,6 +44,7 @@ class SmsReceiver : BroadcastReceiver() {
         var decoded = false
         try {
             val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+            app.smsTime(eventId, "PDU解析完成")
             // 不拼接来自不同发送方的片段，不读取历史短信。
             if (messages.isEmpty() || messages.map { it.originatingAddress }.distinct().size != 1) {
                 app.smsStatus("解析", "广播已到达但解析失败：没有有效片段或片段发送方不一致")
@@ -49,11 +55,15 @@ class SmsReceiver : BroadcastReceiver() {
                 app.smsFinished(); finish(); return
             }
             decoded = true
+            val ages = messages.map { receiveWall - it.timestampMillis }
+            app.updateSmsEvent(eventId, "PDU至onReceive最小差ms", ages.min().toString())
+            app.updateSmsEvent(eventId, "PDU至onReceive最大差ms", ages.max().toString())
             app.smsStatus("解析", "PDU 单/多段解析成功（内容未保存）")
             app.updateSmsEvent(eventId, "解析", "成功")
             val parts = messages.map { it.messageBody.orEmpty() }
             app.updateSmsEvent(eventId, "验证码格式", SmsDiagnosticFormat.recognized(parts).toString())
             val text = OtpParser.parse(parts)
+            app.smsTime(eventId, "OTP模板匹配完成")
             app.updateSmsEvent(eventId, "模板", (text != null).toString())
             if (text == null) {
                 app.smsStatus("模板", "解析成功，未匹配阶段 0 模板")
@@ -63,6 +73,11 @@ class SmsReceiver : BroadcastReceiver() {
                 app.updateSmsEvent(eventId, "最终结果", "广播已收到，未播放")
                 app.smsFinished(); finish()
             } else {
+                if (!SmsSafetyWindow.freshPdu(ages)) {
+                    app.updateSmsEvent(eventId, "最终失败节点", "安全丢弃：PDU年龄超过120秒或时钟差无效")
+                    app.updateSmsEvent(eventId, "最终结果", "仅留时间诊断，不保留或播报过期文本")
+                    app.smsFinished(); finish(); return
+                }
                 app.smsStatus("模板", "已匹配阶段 0 模板（不记录验证码）")
                 app.speak(text, background, finish, fromSms = true, smsEventId = eventId)
             }

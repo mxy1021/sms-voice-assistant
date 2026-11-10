@@ -16,11 +16,14 @@ $readArguments += @('-v','raw','-s','SVA_STAGE0:I','*:S')
     try {
         $event = $line | ConvertFrom-Json -ErrorAction Stop
         if ($event.schema -ne 1 -or $event.package -ne 'com.mxy1021.smsvoiceassistant' -or
-            $event.kind -notin @('timeline','sms','audio','focus','tts-compatibility','lifecycle','event') -or
+            $event.kind -notin @('timeline','sms','audio','focus','tts-compatibility','lifecycle','event','process','context','timing') -or
             [long]$event.epochMs -lt $SinceEpochMillis) { return }
         # 明确重建白名单，拒绝其他 JSON 字段或非本项目原始行。
         $safe = [ordered]@{schema=1;epochMs=$event.epochMs;elapsedMs=$event.elapsedMs;kind=$event.kind;field=$event.field;value=$event.value}
         if ($event.id) { $safe['id'] = $event.id }
+        foreach ($key in @('processRun','processStartElapsed','pointElapsedMs','sinceReceiveMs','dispatchLagMs')) {
+            if ($event.PSObject.Properties.Name -contains $key) { $safe[$key] = $event.$key }
+        }
         $json = $safe | ConvertTo-Json -Compress -Depth 3
         if ($Save) { Add-Content -LiteralPath $destination -Value $json -Encoding utf8 }
         if (-not $Quiet) { Write-Output $json }

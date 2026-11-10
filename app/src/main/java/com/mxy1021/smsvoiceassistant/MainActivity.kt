@@ -37,7 +37,12 @@ class MainActivity : ComponentActivity() {
         compatibility = newCompatibilityProbe()
         setContent { MaterialTheme { Surface { ProbeScreen() } } }
     }
-    override fun onStart() { super.onStart(); app.visible = true; revision++; Stage0Log.state("lifecycle", "Activity", "onStart；前台=true") }
+    override fun onStart() {
+        super.onStart(); app.visible = true; revision++
+        Stage0Log.state("lifecycle", "Activity", "onStart；前台=true")
+        app.smsTime(null, "Activity.onStart")
+        app.environment(null, "Activity.onStart状态")
+    }
     override fun onStop() {
         compatibility.cancel()
         if (app.foregroundFocus != null) app.timeline.add("Activity.onStop：取消前台最小焦点测试")
@@ -45,6 +50,8 @@ class MainActivity : ComponentActivity() {
         offlineConfirmed = false
         app.visible = false
         Stage0Log.state("lifecycle", "Activity", "onStop；前台=false")
+        app.smsTime(null, "Activity.onStop")
+        app.environment(null, "Activity.onStop状态")
         super.onStop()
     }
     private fun newCompatibilityProbe() = TtsCompatibilityProbe(this) {

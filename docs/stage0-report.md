@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-阶段 0 已进入 ADB 真机实测。已确认 Android 17/API 37、两项权限与 AppOps 允许，保留数据更新成功，实时脱敏日志可用。已定位并修复 AIService `zh-Hans` 被旧地区筛选拒绝的问题；前台直接播放及修复后的手动 PCM 样例有声，但用户反馈模板短信前后台听感仍未成功，音乐未降低/暂停。阶段 0 仍不通过，不进入阶段 1。下文保留历史，最新证据见末节“ADB 真机自动化验证”。
+阶段 0 尚未通过，不进入阶段 1。最新人工证据已确认：AIService 离线中文、A/B 直接语音、手动 PCM、前台真实短信和从 APP 直接锁屏后的真实短信均能发声；PCM 路径音乐会降低并恢复，直接 TTS 的音乐未响应。Home 后不能及时播报、重新进入才播报是当前核心阻塞。本轮带时间线复测已定位一例长延迟发生在 `BroadcastReceiver.onReceive` 之前，不能把返回前台后的焦点成功算作后台成功。下文旧结论保留为历史，以末节“Home 后台延迟专项诊断”及本段为准。
 
 ## 初始目录与远程核查
 
@@ -332,3 +332,92 @@ vivo X200 Pro / OriginOS 7：APP 识别默认 AIService TTS，关闭 Wi-Fi 和�
 - 本轮仅提交相关 Kotlin 源码、回归测试、两份阶段文档及两个脱敏采集脚本。最终提交 SHA、正常推送及远程一致性以交付消息和 Git 历史核验为准。
 
 真机已参与且获得有效证据，但短信听感、音乐协调及完整后台矩阵仍未通过，**阶段 0 仍未通过验收，不进入阶段 1**。
+
+## Home 后台延迟专项诊断（2026-11-11，最新）
+
+### 证据范围与交付边界
+
+本节更新此前“模板短信无声、PCM/锁屏未验证”的历史状态。用户已人工确认 AIService 断网中文、A/B 直接语音完整有声但音乐不响应、手动 PCM 有声且音乐降低恢复、APP 前台及从 APP 直接锁屏后的真实模板短信有声且音乐降低恢复。本轮再次用真实 SMS 和耳机听感完成 B01～B06 单次对照，不以模拟广播或 API 回调代替听验。
+
+设备为 vivo X200 Pro / OriginOS 7，实查系统 Android 17/API 37、targetSdk 34；主机 Windows/PowerShell，USB 调试连接。仅选唯一在线授权真机，忽略离线模拟器，不记录设备序列号。复查 RECEIVE_SMS、BLUETOOTH_CONNECT 均 granted=true。播放器名称仍未提供，不能把直接 TTS 的音乐未响应定性为某一播放器缺陷。
+
+Debug APK 使用 install -r 保留数据安装；配置文件指纹前后相等。安装后发现旧运行实例仍输出旧日志格式，因此仅强停本应用并立即启动以载入新版，未清数据。新日志的 processRun 已核验；后续对照保持同一进程标记，没有观察到进程重建。上次退出原因码10对应此次有意停止，不能据此宣称系统杀进程。
+
+### 最小修改与代码排查
+
+| 文件 | 本轮修改或核查 |
+|---|---|
+| MainActivity.kt | 增加 onStart/onStop 的单调时钟和环境记录；PCM 没有 onStart 重播、任务恢复队列；onStop 不取消 SMS PCM |
+| ProbeApplication.kt | 每 SMS 的接收基点、阶段时点及时间差、进程实例、退出原因码、接收/焦点时环境；只持久化最近脱敏状态 |
+| Stage0Log.kt | 统一 processRun/processStartElapsed、pointElapsedMs/sinceReceiveMs/dispatchLagMs；不记录正文、真实码、号码或地址 |
+| SmsReceiver.kt | onReceive/goAsync/解析/匹配时点、PDU 年龄差；仍用系统 PDU API、原 OtpParser 和同一 PCM 会话；finish 在清理后调用 |
+| SpeechSession.kt | 蓝牙/TTS/PCM/焦点/轨道/写入/完成/释放全阶段时间线；保持原严格路由与 PCM 实现，复核8秒 elapsed 预算 |
+| SmsSafetyWindow.kt、SmsSafetyWindowTest.kt | 阶段0安全上限和两项边界回归：迟到/无效 PDU、恢复执行时已超预算 |
+| Read-Stage0Log.ps1 | 新增时间、环境及进程字段白名单，持续采集不固定 PID |
+| Read-Stage0Process.ps1 | 新增只读本包进程、屏幕、窗口快照；平台与厂商两个 isFrozen 分开，缺失为未知 |
+
+BluetoothProbe 原有 A2DP/HEADSET/LE_AUDIO 异步查询及1200ms兜底未改。前台最小测试、A/B 直接 speak 对照、TTS 引擎、验证码匹配、Manifest、SDK 与权限未改；未增加 Service、后台轮询或联网依赖。原链路没有主动等待 Activity 的逻辑、无限重试或待前台队列。
+
+goAsync 覆盖到会话结束清理及 PendingResult.finish，但不能保证进程不冻结。Handler 使用 uptime，冻结/睡眠时8秒回调可能不能准时执行；新增 elapsedRealtime 复核只在恢复执行后拒绝过期播放，不能承诺冻结期间准时 finish。总预算仍为8秒，未延长广播。为防广播迟到后很久才读出真实码，增加临时 PDU 年龄120秒上限，超龄、负差或无有效时间拒绝播放；该值是阶段0安全上限，正式有效期仍需决策。墙钟校时可能导致误拒绝，必须保留诊断，不调整时钟绕过。
+
+### B01～B06 实际结果
+
+| 用例 | SMS 事件与系统证据 | 人工听感/音乐 | 本轮判定 |
+|---|---|---|---|
+| B01 APP前台 | SMS-000015；PDU差2254ms；焦点1；轨道state1/playState3、实际路由true；接收后4022ms finish | 完整有声、音乐降低后恢复 | 本轮通过 |
+| B02 APP直接锁屏 | 观察窗口含 SMS-000018/19；PDU差3298/3417ms；焦点1；后台生命周期标记false、keyguard=true，申请时importance300；finish5086/4682ms | 用户确认该锁屏窗口完整有声、音乐降低后恢复 | 本轮通过；不把一份人工反馈计作两轮 |
+| B03 锁屏静置 | 至少60秒静置后发新短信；SMS-000020；距静置开始约119秒进入onReceive（包含人工发送等待）；PDU差2943ms；焦点1；finish5195ms | 完整有声、音乐降低后恢复 | 本轮短时静置通过；长时Doze未验证 |
+| B04 Home | 系统已确认收信；观察≥20秒没有新SMS编号；本包procState15、厂商附加冻结true、平台优化器冻结false | 无声 | 及时后台播报失败；本观察期未进入接收器 |
+| B05 B04后返回APP | SMS-000016此时才进入；PDU差105726ms；同进程；焦点时已前台；finish4813ms | 此时才完整播报、音乐降低恢复 | 复现迟播，不算后台成功 |
+| B06 Home再锁屏 | 系统已确认收信；观察≥20秒无新编号，procState15及厂商附加冻结true；返回APP才出现SMS-000021，PDU差68320ms，finish4082ms | 等待期间无声；返回APP后完整有声、音乐降低恢复 | 复现Home相关迟播，不算锁屏后台通过 |
+
+每条上述播放事件都已记录模板命中、轨道state=1、playState=3、实际路由=true及焦点=1。听感由用户单独确认，不由轨道标记自动推定。本轮不是三轮稳定性、划走、重启、自启动、长时静置、耳机断连及错路由的完整验收；这些仍未验证。旧报告的8/100仅为首次无设备历史分数，不能当作当前成绩；本轮不补造完整评分，P0-06未通过，85分及关键项全部通过的验收条件尚未满足。
+
+### 相对 onReceive 的阶段数据（毫秒）
+
+| 事件 | 蓝牙起→止 | TTS初始化起→完成 | PCM合成完成 | 焦点完成/返回 | Track创建起→止 | play | 首次语音写入 | 播放完成 | 焦点释放完成 | PendingResult.finish |
+|---|---|---|---:|---|---|---:|---:|---:|---:|---:|
+| SMS-000015 | 21→112 | 113→171 | 295 | 300 / 1 | 305→318 | 326 | 393 | 4002 | 4017 | 4022 |
+| SMS-000016 | 18→301 | 304→417 | 616 | 622 / 1 | 625→635 | 640 | 748 | 4781 | 4806 | 4813 |
+| SMS-000019 | 35→239 | 249→621 | 777 | 818 / 1 | 827→838 | 851 | 995 | 4656 | 4677 | 4682 |
+| SMS-000020 | 50→290 | 311→941 | 1231 | 1248 / 1 | 1257→1267 | 1278 | 1449 | 5167 | 5189 | 5195 |
+| SMS-000021 | 22→224 | 229→321 | 466 | 498 / 1 | 503→513 | 521 | 644 | 4065 | 4078 | 4082 |
+
+数据来自持续 SVA_STAGE0 和本包脱敏事件字段交叉核验。部分日志行在持续流中未保留，测试结束后仅从本包诊断配置提取字段补齐；未输出或保存完整配置、耳机标识、原始系统日志。PDU差包含传输和时钟误差，不是端到端OS排队时间的精确测量。
+
+### 第一延迟点与因果边界
+
+B04：Activity.onStop=923166618；等待期间两次只读快照均无新SMS事件、厂商冻结true。重新启动任务前快照系统运行约923297120；SMS-000016的onReceive=923297559，Activity.onStart=923297583，前者早24ms。蓝牙301ms、TTS417ms、PCM616ms、焦点622ms完成，此时 ActivityStarted=true、importance100。PDU差105.7秒的长等待发生在接收器进入之前，不是已开始的8秒会话超时。该条未触发120秒丢弃门限，故仍会迟播；不能把此安全上限当作及时播报修复。
+
+B06：Home后onStop=923623504；等待期间无新编号。返回APP时SMS-000021的onReceive=923716153、onStart=923716182（早29ms），焦点在498ms后成功且已前台。再次复现接收器前的长延迟。没有证据显示这两次是蓝牙、TTS初始化、synthesizeToFile或AudioTrack自身等待几十秒，也未见应用保存正文等待onStart重放。
+
+最可能解释是 Home 后厂商后台调度/冻结使本包广播执行延后，回到前台时恢复；目前证据能定位到应用接收器之前，不能精确区分系统广播队列、OriginOS专有冻结或解冻调度内部的哪一步。相同随机进程标记排除了本轮进程重建。厂商冻结true在直接锁屏静置也出现过，因此它是相关证据，不是单独的充分因果证明。应保留厂商平台差异，不套用针对动态接收器的广播延迟规则来宣称清单SMS广播必然延迟。
+
+直接锁屏时系统快照保留foregroundActivities=true、procState12；Home后为procState15且未见该前台Activity标记。锁屏短信到达会亮屏，焦点时interactive=true/keyguard=true，APP生命周期标记false。两种场景系统状态不同，所以锁屏有声不能证明Home后台具备资格，也不能把isInteractive等同于APP可见。
+
+### Android 17 AudioHardening 证据
+
+只读dumpsys/audio及Logcat摘要发现本包partial/would记录；锁屏成功窗口新增的焦点与播放检查仍是would，焦点条目exemption=6、vivoBlocked=true。对应真实API焦点返回1、轨道状态正常且用户实际听到。因此本轮**未获得Home事件被AudioHardening实际拒绝或静音的直接证据**；Home等待时尚未进入APP接收器，更没有本次后台焦点返回0可供归因。旧记录不能套到新事件，无记录也不能证明安全机制关闭。未查询或修改安全开关。
+
+[Android 17官方说明](https://developer.android.com/about/versions/17/changes/bg-audio)要求所有target的后台音频具备可见Activity或合适的非shortService前台服务；不合法生命周期可能焦点失败或播放静默。target37另有WIU要求。文档也描述冻结后恢复迟播风险，但这不等于本次已找到系统内部拦截点。不能因厂商当前锁屏放行就承诺纯广播在Android17可靠后台播报。
+
+### 架构候选（仅评估，未实施）
+
+| 方案 | Android17可行性及限制 | 通知、启动/重启 | 能耗/需求影响 |
+|---|---|---|---|
+| A 保持无Service | 前台和本机直接锁屏已有单轮成功；Home及时播报已失败，无法保证不可见/冻结时自动播报 | 无持续通知；现工程无开机接收器，不承诺开机恢复；SMS不能赋予音频资格 | 闲置资源较少，但无法满足随时后台自动播报；保留有限TTL、超时丢弃，禁止恢复后无限迟播 |
+| B 用户前台主动启用mediaPlayback FGS | 官方后台音频生命周期候选；需单独验证“长期等待稀疏短信”是否符合媒体服务用途及平台/分发政策，不把FGS当万能保活 | 需要前台服务通知与FOREGROUND_SERVICE/FOREGROUND_SERVICE_MEDIA_PLAYBACK声明，停止操作明确；用户从可见APP启动。不能假定每条SMS可后台启动；开机自动恢复音频不能承诺，target35+还限制BOOT启动媒体FGS | 进程存活与资源成本需测量，不等于持续占用CPU；长期开启等待与原“无常驻Service”要求冲突，须用户重新决策；本轮未添加 |
+| C 用户主动打开APP后播放新鲜测试/事件 | 可见Activity执行符合前台模式；普通通知/用户点开是候选交互，后台投递通知本身仍需验证 | 可无持续通知；若新增普通通知需评估POST_NOTIFICATIONS，未申请；不通过SMS擅自启动Activity；开机后仍需主动开启 | 资源低、失去无人操作自动播报；不把真实码无限留存供迟播，可只提示有事件后由用户重新操作，不保留正文 |
+
+B必须先决定启用时段、停止/通知、空闲等待适用性和可接受耗电，再做独立阶段0可行性验证。若用户坚持完全无Service，则需接受方案A的后台缺口或方案C的交互变化；当前不能声称产品目标已经满足。单纯改用WorkManager/Job不能绕过音频资格，也不适合秒级真实码播报。引入伴生设备权限等也不是已验证的通用替代，不在本轮扩权。
+
+依据：[FGS后台启动限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)、[mediaPlayback类型与权限/开机限制](https://developer.android.com/develop/background-work/services/fgs/service-types#media)。普通SMS不是文档明确列出的通用后台启动豁免；target34不代表Android17背景音频限制豁免。未实施Root、关闭hardening、降低target、隐藏通知或厂商保活绕过。
+
+### 本轮构建、隐私及交付
+
+- 执行 `.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --console=plain`，最终BUILD SUCCESSFUL（11秒，51项任务，14执行/37最新）；14项单元测试，0失败/错误；Lint 0错误、13警告。主机测试不能证明系统后台行为。
+- Debug APK位于 `app/build/outputs/apk/debug/app-debug.apk`，24,129,306字节，SHA-256为 `C84D6A7A8523CAAFF3A8B5682E01C70DF9468D7DA4A711D2CB400EFF37033DC4`；已保留数据安装并核对设备包APK哈希一致，新进程已载入诊断代码。
+- 原始系统日志未落盘或上传；脱敏JSON/进程快照仅在已忽略的 `app/build/stage0-device/`。公开文档只保留事件编号、阶段间隔、API状态及听感；不包含真实正文、真实验证码、号码、MAC、序列号或认证信息。
+- 推送前检查差异、忽略规则和暂存区；最终提交与远程SHA一致性由交付消息及Git历史记录，不在提交内自填循环SHA。
+
+最终结论：诊断代码、构建、单元测试和保留数据安装完成；PCM前台/直接锁屏/短时锁屏静置的单轮听验成立。Home与Home后锁屏的及时自动播报失败，首次长延迟在onReceive之前；OriginOS内部机制与AudioHardening实际阻止尚不能定论。无Service架构目前不能满足完整后台目标，下一步应先决策可接受的生命周期与交互，再做可行性验证。阶段0仍未通过，不进入阶段1。
