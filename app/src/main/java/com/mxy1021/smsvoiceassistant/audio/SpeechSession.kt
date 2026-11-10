@@ -55,6 +55,9 @@ class SpeechSession(
     private var playbackDone = false
     private var synthesisRequested = false
     private var focusGranted = false
+    private val focusGate = SpeechFocusGate()
+    private var expectedFrames = 0L
+    private var onFocusReady: (() -> Unit)? = null
     @Volatile private var pcmOverflow = false
     private val startElapsed = app.receivedAt(smsEventId) ?: SystemClock.elapsedRealtime()
     private fun mark(point: String, at: Long = SystemClock.elapsedRealtime()) {
@@ -244,6 +247,39 @@ class SpeechSession(
     private fun matches(device: AudioDeviceInfo?) = permitted() && device != null &&
         BluetoothProbe.bluetooth(device) && RoutePolicy.matches(target, listOf(device.address))
 
+    private fun focusChanged(change: Int) {
+        if (ended) return
+        log("onAudioFocusChange=$change")
+        record("onAudioFocusChange", change)
+        when (focusGate.change(change)) {
+            SpeechFocusAction.STOP -> end("永久丢失音频焦点，取消播报")
+            SpeechFocusAction.PAUSE -> {
+                try { track?.pause() } catch (_: Exception) { end("临时焦点丢失时暂停语音失败"); return }
+                mark("语音临时暂停")
+                app.event("临时音频占用：本次语音暂停等待焦点，仍受8秒预算限制", background)
+            }
+            SpeechFocusAction.RESUME -> {
+                if (!alive("临时焦点恢复")) return
+                val player = track ?: return
+                val played = player.playbackHeadPosition.toLong() and 0xffffffffL
+                val remaining = ((expectedFrames - played).coerceAtLeast(0) * 1000 + rate - 1) / rate
+                if (!PcmBudget.remainingFits(remaining, SystemClock.elapsedRealtime() - startElapsed)) {
+                    end("焦点恢复后剩余时间不足，取消未完成语音"); return
+                }
+                // A paused speech track must keep its exact route. Before submission only
+                // silence is queued, and the original actual-route gate still controls PCM.
+                if (playing && !matches(player.routedDevice)) { end("焦点恢复时实际路由不匹配，取消播报"); return }
+                try {
+                    player.play()
+                    mark("语音焦点恢复")
+                    app.event("焦点已恢复，继续本次语音；完整听感仍待确认", background)
+                    onFocusReady?.invoke()
+                } catch (_: Exception) { end("焦点恢复后无法继续语音") }
+            }
+            SpeechFocusAction.NONE -> Unit
+        }
+    }
+
     private fun play(output: AudioDeviceInfo) {
         if (!alive("PCM播放准备")) return
         stage = "PCM 格式校验"
@@ -264,12 +300,8 @@ class SpeechSession(
         focus = AudioFocusRequest.Builder(focusMode)
             .setAudioAttributes(BluetoothProbe.attributes)
             .setAcceptsDelayedFocusGain(false)
-            .setOnAudioFocusChangeListener({ change ->
-                if (!ended) {
-                    log("onAudioFocusChange=$change")
-                    if (change != AudioManager.AUDIOFOCUS_GAIN) end("焦点丢失，取消播报")
-                }
-            }, main).build()
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(::focusChanged, main).build()
         if (!alive("申请音频焦点")) { data.fill(0); return }
         mark("requestAudioFocus开始")
         app.environment(smsEventId, "申请焦点状态")
@@ -283,6 +315,7 @@ class SpeechSession(
             data.fill(0); end("音频焦点申请失败，拒绝播报"); return
         }
         focusGranted = true
+        focusGate.granted()
         stage = "AudioTrack 初始化/静音实际路由"
         app.event("焦点已获得；音乐降低音量及恢复仍待听验", background)
         val mask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
@@ -303,9 +336,10 @@ class SpeechSession(
         val silence = ByteArray(rate / 10 * channels * 2)
         val silenceWritten = player.write(silence, 0, silence.size, AudioTrack.WRITE_NON_BLOCKING)
         if (silenceWritten <= 0) { data.fill(0); end("静音路由探测失败"); return }
+        expectedFrames = (silenceWritten + data.size).toLong() / (channels * 2)
         var submitted = false
         fun submit() {
-            if (ended || submitted) return
+            if (ended || submitted || !focusGate.held) return
             if (!alive("实际路由回调")) { data.fill(0); return }
             val matched = matches(player.routedDevice)
             log("静音轨道实际路由匹配=$matched；未匹配前不写入语音 PCM")
@@ -342,7 +376,9 @@ class SpeechSession(
                             break
                         }
                         val count = permit?.let { token -> app.settings.withPermit(token) {
-                            if (ended || !authorized() || !matches(player.routedDevice)) -1
+                            if (ended || !authorized()) -1
+                            else if (!focusGate.held) 0
+                            else if (!matches(player.routedDevice)) -1
                             else player.write(data, offset, minOf(2048, data.size - offset), AudioTrack.WRITE_NON_BLOCKING)
                         } } ?: -1
                         if (count < 0) { main.post { end("运行状态、权限或路由改变，取消 PCM 写入") }; break }
@@ -361,6 +397,7 @@ class SpeechSession(
                 finally { data.fill(0) }
             }
         }
+        onFocusReady = { submit() }
         player.addOnRoutingChangedListener({ if (submitted) verifyLiveRoute() else submit() }, main)
         if (!alive("AudioTrack.play")) { data.fill(0); return }
         mark("AudioTrack.play")
@@ -375,6 +412,8 @@ class SpeechSession(
     private fun end(code: String) {
         if (ended) return
         ended = true
+        focusGate.end()
+        onFocusReady = null
         playbackPcm?.fill(0)
         playbackPcm = null
         main.removeCallbacks(timeout)

@@ -60,4 +60,6 @@ object PcmBudget {
     }
     fun fits(duration: Long, elapsed: Long) = duration in 1..MAX_SPEECH_MS && elapsed >= 0 &&
         duration + elapsed + ROUTE_AND_CLEANUP_MS < SmsSafetyWindow.SESSION_BUDGET_MS
+    fun remainingFits(remainingMs: Long, elapsed: Long) = remainingMs in 0..(MAX_SPEECH_MS + 100) && elapsed >= 0 &&
+        remainingMs + elapsed + ROUTE_AND_CLEANUP_MS < SmsSafetyWindow.SESSION_BUDGET_MS
 }

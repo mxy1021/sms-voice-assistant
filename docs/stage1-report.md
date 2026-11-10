@@ -4,7 +4,7 @@
 
 ## 1. 当前结论与完成范围
 
-**阶段1代码、主机自动化、保留数据部署及可执行设备检查已交付；阶段1尚未正式验收通过。** 用户已确认固定测试的耳机语音和音乐降低/恢复；已允许并完成三次真实重启。用户现正在进行真实SMS与物理断USB验收，结果在收到明确反馈前均保持未验证。不进入阶段2。
+**阶段1尚未正式验收通过：真实SMS测试发现临时焦点中断故障，修复版正在复测。** 用户已确认总开关初始启用可播报、关闭不播报，固定测试耳机语音和音乐降低/恢复；完成三次真实重启。切换规则后用户报告只听短信提示音，不能继续使用此前“未发现新失败”的结论。其余未反馈项目保持未验证，不进入阶段2。
 
 | 范围 | 实现状态 | 验证状态 |
 |---|---|---|
@@ -18,7 +18,13 @@
 | 较长全文 | 当前架构不支持完整播放 | 明确整条拒绝，不截断、不授予成功 |
 | 阶段0后台回归、冷进程SMS、动态安全与断USB | 等待真机验证 | 不以阶段0历史或固定按钮测试替代 |
 
-未发现已执行检查中可确认的新失败；这不是必要验收全部通过。普通 am kill 未实际回收进程、开机广播未观察到，均保留局限，不补造结果。
+已确认真实SMS故障，修复及证据见下节。普通 am kill 未实际回收进程、开机广播未观察到，均保留局限，不补造结果。
+
+### 真实SMS故障与修复复测
+
+用户确认：关闭总开关不播报、开启后播报；关闭验证码筛选后只听提示音，后续切换两个规则仍失声。脱敏时序显示多条SMS解析/离线PCM合成成功（示例完整PCM约3.507秒），requestAudioFocus=1、实际蓝牙路由匹配；语音写入后收到onAudioFocusChange=-3，旧逻辑把所有非GAIN事件直接取消，约数百毫秒终结，未完成播放。此证据与通知音临时抢占相符，未收集或确定具体抢占应用。另有一条因全文音频预算超限被整条拒绝，独立记录，不能混为设置失效。
+
+修复保留同一MAY_DUCK请求：-2/-3仅暂停本应用AudioTrack及PCM写入，GAIN时核对旧许可、实际路由和剩余完整音频预算再继续；-1永久丢失仍取消。原8秒总计时不延长，停止/超时后不接受晚到GAIN复活。设置setWillPauseWhenDucked(true)只声明本应用语音如何响应别人暂占焦点，不请求暂停音乐，不增加模式B。依据[Android音频焦点官方说明](https://developer.android.com/media/optimize/audio-focus)。新增5项状态/预算测试后共44项、0失败，构建和Lint通过；真机修复结果等待用户反馈，旧失败保留。
 
 ## 2. 五个开发批次
 
@@ -91,7 +97,7 @@ SettingsRepository封装同一个stage0 SharedPreferences，旧target原位保�
 - 观察到固定测试PCM全部写入、播放完成及焦点释放回调；用户明确确认“指定耳机完整有声，音乐降低并恢复”。该结果不包含真实SMS或本轮断网听验。
 - 用户已开始真实SMS/断USB人工验收，尚未反馈的项目仍未验证。没有模拟SMS，不能用按钮回调替代。
 
-最终APK：app/build/outputs/apk/debug/app-debug.apk；24,245,331字节；SHA-256 `421000fff157732a994b5dc61ea0571c37cce3c0240aa0931d53afdeb3ca98bd`。本地构建证据在app/build，不上传APK、UI原图、配置或原始日志。
+最终焦点修复APK：app/build/outputs/apk/debug/app-debug.apk；24,245,331字节；SHA-256 `cfe54f9e5516a8c644b4f277c5f71a8c62d660a2f2538a6e53c616de19e00599`，保留数据更新Success。本地构建证据在app/build，不上传APK、UI原图、配置或原始日志。此前五批部署结果与本次修复复测分开记录。
 
 ## 8. 阶段0回归状态
 
@@ -112,7 +118,7 @@ docs/stage0-report.md和stage0-test-plan.md与基线无差异，历史验收没�
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --console=plain
 ```
 
-BUILD SUCCESSFUL，12秒；39测试、0失败、0错误、0跳过；Lint0错误、14警告。警告为固定target、Gradle/Compose/Activity版本提示及KTX写法建议，未为此升级或掩盖警告。额外processReleaseMainManifest成功。
+五批最终检查BUILD SUCCESSFUL，12秒、39测试。随后焦点故障修复再次执行同一完整命令：BUILD SUCCESSFUL，14秒；44测试、0失败、0错误、0跳过；Lint0错误、14警告。警告为固定target、Gradle/Compose/Activity版本提示及KTX写法建议，未为此升级或掩盖警告。额外processReleaseMainManifest成功。
 
 Debug/Release合并权限均恰为RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT_COMPLETED；Service数0，Release无诊断Activity。未新增应用依赖或网络权限。静态审查：实际PCM仍严格目标路由、MAY_DUCK、结束释放；没有全局音量/播放器控制或正文落盘。测试覆盖配置升级/重建、规则依赖、许可竞态、识别/格式化、多数字负例、多段身份/时间、防重、全文/PCM预算及状态映射。没有故障注入便不授予TTS/焦点失败的真机通过。
 
@@ -122,6 +128,6 @@ Debug/Release合并权限均恰为RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT
 
 ## 11. 验收与继续条件
 
-T01～T15、R01～R20、L01～L10的实际状态见[完整测试清单](stage1-test-plan.md)。当前无法宣布阶段1全范围完成：长全文部分实现，真实SMS三种规则、停止与竞争、Home/锁屏、动态断连、权限撤销、后台静置及断USB结果仍待确认。当前没有证据把这些未测项目判成失败，也没有证据判通过。
+T01～T15、R01～R20、L01～L10的实际状态见[完整测试清单](stage1-test-plan.md)。当前无法宣布阶段1全范围完成：长全文部分实现；已发现规则切换测试中的临时焦点中断故障，修复版待真实复测。初始总开关启用/停止由用户确认；真实SMS三种规则、播放中停止/竞争、Home/锁屏、动态断连、权限撤销、后台静置及断USB结果仍待确认。保留已知失败；未测试的项目不判通过或失败。
 
 补齐必要人工验收并处理真实回归后再判断是否通过；本任务不进入阶段2。

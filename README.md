@@ -1,6 +1,6 @@
 # SMS Voice Assistant
 
-个人自用的本地 Android 短信语音助手。阶段1代码已实现并增量部署到目标机，**阶段1真实SMS综合验收尚未通过**；长全文受现有无 Service 架构限制。详见[阶段1报告](docs/stage1-report.md)与[逐项测试结果](docs/stage1-test-plan.md)。不进入阶段2。
+个人自用的本地 Android 短信语音助手。阶段1代码已实现并增量部署到目标机，**真实SMS测试发现临时音频焦点中断故障，修复版正在复测，阶段1尚未通过**；长全文受现有无 Service 架构限制。详见[阶段1报告](docs/stage1-report.md)与[逐项测试结果](docs/stage1-test-plan.md)。不进入阶段2。
 
 ## 使用
 
@@ -43,7 +43,7 @@ python scripts/Test-Stage1Device.py --ui-smoke
 
 APK：`app/build/outputs/apk/debug/app-debug.apk`，不提交仓库。设备脚本需要ADB在PATH、唯一在线授权目标机、已安装Debug版本；UI检查需解锁且手机空闲。它会短暂切换筛选并恢复，不发SMS、不授权、不清数据、不重启。详细参数、真实短信/重启/断USB步骤见测试计划。
 
-39项主机单元测试通过，0失败；Lint0错误、14警告。设备安装、UI、三次重启状态与固定耳机测试有独立证据；真实SMS三行为、Home/锁屏回归和物理断USB测试仍待用户完成，不能由自动化替代。
+44项主机单元测试通过，0失败；Lint0错误、14警告。总开关初始真实SMS启用/停止、设备安装、UI、三次重启状态与固定耳机测试有独立证据；规则切换后的临时焦点故障已修复代码，等待真实SMS复测，Home/锁屏回归和物理断USB结果仍待确认，不能由自动化替代。
 
 ## 文档
 

@@ -27,8 +27,8 @@ adb -s $svaDevice shell am start -n com.mxy1021.smsvoiceassistant/.MainActivity
 |---|---|---|---|
 | T01 | 保留数据更新 APK | 已成功增量安装；旧目标指纹一致 | 真机通过（安装/配置，不代表短信） |
 | T02 | 正式界面、滚动、安全区域、明暗主题 | Compose构建；ADB主标题/规则通过，浅深主题截图检查正常，原主题恢复 | 真机UI通过；无短信授分 |
-| T03 | 启用后接收真实验证码 SMS | 运行门禁单测通过 | 未验证 |
-| T04 | 停止后再次接收 SMS，必须静默 | 状态/许可及并发单测通过 | 未验证 |
+| T03 | 启用后接收真实验证码 SMS | 运行门禁单测通过 | 用户确认初始启用可播报；随后出现临时焦点中断故障，修复版待复测 |
+| T04 | 停止后再次接收 SMS，必须静默 | 状态/许可及并发单测通过 | 用户确认关闭后不播报，通过 |
 | T05 | Home 后配置保持 | 持久化单测；设备进程/导航检查见报告 | 后台真实SMS未验证 |
 | T06 | 重开 APP 配置不丢 | 单测通过；ADB重开及重启检查保留 | 真机状态通过 |
 | T07 | 阶段0旧目标仍选中 | 升级单测；更新前后私有目标指纹相等 | 真机通过 |
@@ -46,11 +46,11 @@ adb -s $svaDevice shell am start -n com.mxy1021.smsvoiceassistant/.MainActivity
 | 用例 | 操作与预期 | 自动化结果 | 真机结果 |
 |---|---|---|---|
 | R01 | 两个规则新安装默认开 | freshDefaults通过 | 不清数据做新装，未验证新装UI |
-| R02 | 筛选开、精简开：验证码精简 | standardOtpAndPlatform等通过 | 未验证 |
+| R02 | 筛选开、精简开：验证码精简 | standardOtpAndPlatform等通过 | 切换规则后用户报告不播报；焦点修复待复测 |
 | R03 | 同配置：普通SMS忽略 | ordinarySmsWithManyNumbersIsNotOtp通过 | 未验证 |
-| R04 | 筛选开、精简关：验证码原文 | otpFullTextPreservesAllCharactersAndSafetyReminder通过 | 未验证 |
+| R04 | 筛选开、精简关：验证码原文 | otpFullTextPreservesAllCharactersAndSafetyReminder通过 | 切换后不播报故障，修复待复测 |
 | R05 | 同配置：普通SMS仍忽略 | 同上单测通过 | 未验证 |
-| R06 | 筛选关：普通SMS原文 | allSmsModeAlwaysUsesUnmodifiedFullText通过 | 未验证 |
+| R06 | 筛选关：普通SMS原文 | allSmsModeAlwaysUsesUnmodifiedFullText通过 | 失败：用户只听见提示音；日志确认临时焦点中断，修复待复测 |
 | R07 | 筛选关：验证码也读原文 | 同上，两个精简保存值均覆盖 | 未验证 |
 | R08 | 筛选关：精简控件禁用 | 仓库拒绝依赖外修改单测通过 | ADB真实UI通过 |
 | R09 | 重开筛选：精简原值保留 | recreationAndRuleDependency通过 | ADB真实UI通过 |
@@ -75,7 +75,7 @@ adb -s $svaDevice shell am start -n com.mxy1021.smsvoiceassistant/.MainActivity
 | L03 | 播放中改路由 | AudioTrack实际路由回调与写入门禁 | 未验证 |
 | L04 | 迟到/过期验证码丢弃 | SmsSafetyWindowTest覆盖120秒及无效时钟差 | 真机迟到未验证 |
 | L05 | 离线TTS初始化/合成失败 | 失败路径资源清理审查 | 故障注入未验证 |
-| L06 | 焦点请求失败 | 拒绝PCM写入与清理审查 | 故障注入未验证 |
+| L06 | 焦点请求失败或播放中丢失 | 44项测试含临时中断/永久丢失/晚到恢复/剩余预算 | 实际观察到-3导致旧版取消；修复版待真实SMS复测 |
 | L07 | 长全文超过预算 | 80字符/5秒/1MiB/剩余预算/8秒单测通过 | 长全文当前架构不支持；真机边界待测 |
 | L08 | 短时间重叠多条 | 忙碌拒绝、不排队；摘要防重单测 | 突发真实SMS未验证 |
 | L09 | 正常回收进程后配置恢复 | 仓库重建单测；Home后am kill未实际回收，不能授予设备通过 | 冷进程接收真实SMS未验证 |
