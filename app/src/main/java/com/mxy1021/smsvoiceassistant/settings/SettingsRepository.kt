@@ -52,7 +52,8 @@ class SettingsRepository(private val store: SettingsStore, private val bootCount
             "setupCompleted" to next.setupCompleted))
         mutable.value = next
     }
-    fun setEnabled(value: Boolean) = update { it.copy(announcingEnabled = value) }
+    fun setEnabled(value: Boolean) = update { it.copy(announcingEnabled = value,
+        setupCompleted = it.setupCompleted || (value && it.selectedBluetoothDevice != null)) }
     fun setOtpOnly(value: Boolean) = update { it.copy(otpOnlyEnabled = value) }
     fun setSimplify(value: Boolean) = update { if (it.otpOnlyEnabled) it.copy(otpSimplifyEnabled = value) else it }
     fun setBootRestore(value: Boolean) = update { it.copy(bootRestoreEnabled = value) }

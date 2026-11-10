@@ -21,7 +21,7 @@ class AnnouncementRulesTest {
         assertEquals("您收到的验证码为零一二三。", SpeechFormatter.choose("验证码0123。", enabled).text)
     }
     @Test fun lettersAreSpelledWithoutDroppingCharacters() {
-        assertEquals("您收到的验证码为字母A，零，字母B，一。", SpeechFormatter.choose("验证码：a0B1。", enabled).text)
+        assertEquals("您收到的验证码为小写字母A，零，大写字母B，一。", SpeechFormatter.choose("验证码：a0B1。", enabled).text)
         assertNull(OtpDetector.detect("验证码ABCD。"))
     }
     @Test fun ordinarySmsWithManyNumbersIsNotOtp() {
@@ -36,7 +36,8 @@ class AnnouncementRulesTest {
         assertEquals("0123", otp.code)
     }
     @Test fun ambiguityAndMissingCodeAreRejected() {
-        listOf("验证码：1234，验证码：5678。", "验证码为，请稍候。", "验证码可能是1234或5678").forEach {
+        listOf("验证码：1234，验证码：5678。", "验证码为，请稍候。", "验证码可能是1234或5678",
+            "验证码1234或5678", "验证码1234 5678", "验证码1234/5678").forEach {
             assertNull(SpeechFormatter.choose(it, enabled).text)
         }
     }

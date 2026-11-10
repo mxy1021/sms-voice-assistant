@@ -96,7 +96,7 @@ class ProbeApplication : Application() {
             .associateWith { "未执行/未观测" } + mapOf(
                 "SMS_RECEIVED" to "已触发", "APP前台" to visible.toString(),
                 "系统API" to Build.VERSION.SDK_INT.toString(), "targetSdk" to applicationInfo.targetSdkVersion.toString(),
-                "开始毫秒" to System.currentTimeMillis().toString(), "gain" to mode.toString(),
+                "开始毫秒" to System.currentTimeMillis().toString(), "gain" to "3",
                 "speak调用" to "未调用（短信仍为严格文件合成/PCM路径）",
                 "最终失败节点" to "未终结", "最终结果" to "处理中", "接收器finish" to "等待",
                 "后台限制" to "未验证，不能由 API 37 或无声直接推断")
@@ -212,7 +212,7 @@ class ProbeApplication : Application() {
 
     fun speak(text: String, background: Boolean, finished: () -> Unit = {}, fromSms: Boolean = false, smsEventId: String? = null) {
         if (session == null && foregroundFocus == null && !compatibilityTestActive && !fromSms) timeline.reset()
-        timeline.add("进入${if (fromSms) "真实短信严格链路" else "离线中文 / 焦点测试按钮"}；gain=$mode，后台=$background")
+        timeline.add("进入${if (fromSms) "真实短信严格链路" else "离线中文 / 焦点测试按钮"}；gain=3，后台=$background")
         if (compatibilityTestActive || foregroundFocus != null || session != null) {
             timeline.add("播放前置条件=false：另一测试正在运行；最终失败阶段=启动门禁")
             if (fromSms) {

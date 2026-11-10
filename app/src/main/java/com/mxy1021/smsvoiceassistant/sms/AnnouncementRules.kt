@@ -19,6 +19,7 @@ object OtpExtractor {
         val suffix = body.substring(match.range.last + 1)
         // Do not reinterpret decimals, dates, quantities, or amounts as codes.
         if (Regex("^(?:[年月日元号]|[.．:/-][0-9])").containsMatchIn(suffix)) return null
+        if (Regex("^\\s*(?:或|[/／]|[0-9]|、\\s*[A-Za-z0-9])").containsMatchIn(suffix)) return null
         return Otp(platform.find(body)?.groupValues?.get(1)?.trim(), code)
     }
 }
@@ -40,7 +41,7 @@ object SpeechFormatter {
         if (!settings.otpSimplifyEnabled) return full(body)
         val code = otp.code.map { ch ->
             if (ch in '0'..'9') "零一二三四五六七八九"[ch - '0'].toString()
-            else "字母${ch.uppercaseChar()}"
+            else "${if (ch.isLowerCase()) "小写" else "大写"}字母${ch.uppercaseChar()}"
         }.joinToString(if (otp.code.all { it in '0'..'9' }) "" else "，")
         return SpeechDecision("您收到的${otp.platform.orEmpty()}验证码为${code}。", "精简验证码，等待音频安全检查")
     }

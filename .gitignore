@@ -18,6 +18,8 @@ otp-data*
 .cxx/
 .externalNativeBuild/
 *.hprof
+__pycache__/
+*.pyc
 .idea/workspace.xml
 .idea/tasks.xml
 .idea/shelf/

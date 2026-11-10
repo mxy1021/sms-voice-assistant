@@ -62,6 +62,16 @@ class SettingsRepositoryTest {
             assertNull(repo.withPermit(permit) { "unexpected PCM" })
         } finally { release.countDown(); executor.shutdownNow() }
     }
+    @Test fun ruleAndTargetChangesInvalidateInFlightText() {
+        val repo = SettingsRepository(MemorySettingsStore(), 1)
+        repo.setEnabled(true)
+        val oldRules = repo.permit(true)!!
+        repo.setOtpOnly(false)
+        assertFalse(repo.valid(oldRules))
+        val oldTarget = repo.permit(true)!!
+        repo.selectDevice("another-synthetic-device")
+        assertFalse(repo.valid(oldTarget))
+    }
     @Test fun rebootWithoutRestorePausesBeforeAnyReceiver() {
         val store = MemorySettingsStore(); val repo = SettingsRepository(store, 3)
         repo.setEnabled(true)

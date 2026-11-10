@@ -38,7 +38,11 @@ class SpeechSession(
     private var focus: AudioFocusRequest? = null
     private var track: AudioTrack? = null
     private val worker = Executors.newSingleThreadExecutor()
-    private val pcm = ByteArrayOutputStream()
+    private class MemoryPcm : ByteArrayOutputStream() {
+        fun clear() { buf.fill(0); reset() }
+    }
+    private val pcm = MemoryPcm()
+    @Volatile private var playbackPcm: ByteArray? = null
     private var rate = 0
     private var encoding = 0
     private var channels = 0
@@ -243,7 +247,8 @@ class SpeechSession(
     private fun play(output: AudioDeviceInfo) {
         if (!alive("PCM播放准备")) return
         stage = "PCM 格式校验"
-        val data = synchronized(pcm) { pcm.toByteArray().also { pcm.reset() } }
+        val data = synchronized(pcm) { pcm.toByteArray().also { pcm.clear() } }
+        playbackPcm = data
         if (rate !in 8000..48000 || channels !in 1..2 ||
             encoding != AudioFormat.ENCODING_PCM_16BIT || data.isEmpty() || pcmOverflow) {
             data.fill(0); end("引擎未返回支持的 PCM，拒绝播报"); return
@@ -370,6 +375,8 @@ class SpeechSession(
     private fun end(code: String) {
         if (ended) return
         ended = true
+        playbackPcm?.fill(0)
+        playbackPcm = null
         main.removeCallbacks(timeout)
         log("最终失败阶段=${if (playbackDone) "无" else stage}；$code")
         record("最终失败节点", if (playbackDone) "无 API 失败" else stage)
@@ -395,7 +402,7 @@ class SpeechSession(
         runCatching { sink?.close() }
         runCatching { audio.unregisterAudioDeviceCallback(deviceCallback) }
         if (receiverRegistered) runCatching { app.unregisterReceiver(disconnect) }
-        synchronized(pcm) { pcm.reset() }
+        synchronized(pcm) { pcm.clear() }
         worker.shutdownNow()
         sms("TTS", when {
             playbackDone -> "合成和播放完成回调已到达；实际耳机听验待记录"
