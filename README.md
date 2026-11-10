@@ -1,10 +1,30 @@
-# SMS Voice Assistant：阶段 0
+# SMS Voice Assistant：阶段 0 交付归档
 
-仅实现 Android 原生技术验证。不是正式产品，不包含阶段 1～5 的规则引擎、短信历史、常驻服务或云端功能。
+阶段 0 核心技术可行性验证：**通过**。结论仅适用于 vivo X200 Pro、OriginOS 7、Android 17 / API 37，以及用户开启「允许后台高耗电」后的已测条件。完整边界和跨设备兼容性尚未全部验证。本次只完成阶段 0 收尾，尚未实施阶段 1～5。
 
-## 打开与构建
+## 当前需求与架构决策
 
-用 Android Studio 打开本目录，使用 JDK 17 和 Android SDK 36。配置为 Kotlin 2.2.0、AGP 8.12.1、Gradle 8.13、Compose、单模块；minSdk 33 / targetSdk 34 / compileSdk 36。SDK 路径由环境变量或本机 `local.properties` 提供，后者禁止提交。
+正式产品只保留模式 A：`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`。模式 B（暂停音乐）、`AUDIOFOCUS_GAIN_TRANSIENT` 暂停策略、暂停后恢复播放、A/B 切换设置及相关后续维护任务正式取消。原型中的 A/B 界面和直接 TTS 按钮仅作为历史诊断工具保留，不代表正式产品功能；本次不改已验证业务代码，后续可另开独立清理任务。
+
+优先沿用已验证的事件驱动链路：
+
+`SMS_RECEIVED BroadcastReceiver → 本地模板识别 → 指定蓝牙设备连接检查 → 预期路由验证 → 可确认的离线中文 TTS 合成 → 内存 PCM → 请求 MAY_DUCK 焦点 → AudioTrack 静音探测并确认实际路由 → 写入语音 PCM → 播放结束/失败/取消后清理并释放焦点`。
+
+音乐降低及恢复交由系统和播放器响应；不直接修改全局媒体音量，不直接控制第三方播放器。路由无法确认、目标耳机未连接、焦点失败时拒绝自动播报，不回退手机扬声器。网络 Voice、未安装 Voice 和无法确认离线状态的 Voice 继续严格拒绝；保留已经修复的 zh-Hans 支持。
+
+不使用常驻 Service、Foreground Service、定时轮询、联网或云端 API，不需要 Root、系统签名或默认短信角色。只申请 RECEIVE_SMS、BLUETOOTH_CONNECT，不读取短信数据库，不保存真实短信、验证码或语音文件。
+
+## 已确认结果与运行配置
+
+用户真实设备确认：短信权限及 AppOps 允许；真实普通 SMS 可接收解析，非验证码不播报；固定模板识别成功；AIService 断网中文及 PCM/AudioTrack 完整播报成功；目标耳机断开不走扬声器，重连恢复自动播报。
+
+OriginOS 7 必须由用户在本应用的系统后台/耗电管理中核对并开启 **「允许后台高耗电」**。设置入口随系统版本可能变化；应用不自动调整该设置，也不关闭 Android 安全限制。系统升级、应用更新或设置重置后需重新核验。此配置有后台耗电影响，尚无量化耗电结论。
+
+开启后用户确认 S01～S06 全部通过：Home 连续3条、Home后锁屏连续3次、后台静置10～15分钟、音乐降低后恢复、耳机断开拒绝扬声器、重连恢复。6/6 是六组场景结果，不是100分评分或所有边界稳定性保证。历史 Home 广播迟到高度符合 OriginOS 耗电管理影响，内部具体调度机制未完全证实。
+
+## 打开、构建与验证
+
+Android Studio 打开本目录，使用 JDK 17、Android SDK / Build Tools 36.0.0。Kotlin 2.2.0、AGP 8.12.1、Gradle 8.13、Jetpack Compose、单模块；minSdk 33 / targetSdk 34 / compileSdk 36。SDK 路径使用环境变量或被忽略的 local.properties。
 
 ```powershell
 .\gradlew.bat :app:assembleDebug
@@ -12,39 +32,29 @@
 .\gradlew.bat :app:lintDebug
 ```
 
-APK 位于 `app/build/outputs/apk/debug/app-debug.apk`，不上传仓库。构建时需要下载依赖；应用运行时不申请联网权限。
+APK 位于 `app/build/outputs/apk/debug/app-debug.apk`，不上传仓库。构建依赖下载与应用运行无联网权限是两回事。本轮仅改文档，未重跑构建；最近代码版本构建、14项单元测试、Lint及保留数据安装结果见[验收报告](docs/stage0-report.md)。
 
-## 验证方式
+按[测试计划](docs/stage0-test-plan.md)正常授权、选择耳机并核对后台设置。断网时关闭 Wi-Fi 和移动数据，同时保留蜂窝短信能力；不得用模拟广播代替真实 SMS。
 
-1. 按 [测试计划](docs/stage0-test-plan.md) 安装并正常申请两项权限。
-2. 在系统设置中先配对耳机，再在验证界面读取、选择并检测。
-3. 在系统预先安装离线简体中文 TTS 资源。关 Wi-Fi、关移动数据，保留蜂窝短信能力。分别测试 A/B 模式和固定合成样例。
-4. 使用真实新短信测试前台、后台、划走、锁屏、音乐及拒绝播报场景。真实内容不写入报告。
-5. 仅在 [验收报告](docs/stage0-report.md) 有真实证据且满足全部门槛时验收。
+## 生命周期、安全与后续边界
 
-## 安全与生命周期
+预期路由与目标身份严格核对，再检查 AudioTrack 实际路由；不按名称推测设备身份。PCM仅内存收集、以 /dev/null 丢弃文件输出；只支持16位单/双声道。私有配置保存目标蓝牙身份、原型焦点模式和脱敏诊断状态，禁止备份，不保存短信或验证码。
 
-- 清单仅声明 `RECEIVE_SMS`、`BLUETOOTH_CONNECT`；不申请默认短信角色，不查询短信数据库，不扫描设备。
-- 只识别任务指定的网易六位模板；示例中的数字完全为人工合成数据。
-- 私有配置只保存目标蓝牙身份、焦点模式和最近脱敏状态；不保存发送方、短信、验证码或语音文件。禁止备份。
-- 预期路由须与目标蓝牙地址精确匹配；再用静音 `AudioTrack` 的实际路由核对。地址为空、不同、查询失败或焦点失败均拒绝播报。不会用名称推测身份。
-- TTS 选择已安装的非网络简体中文 voice，以 `/dev/null` 描述符丢弃文件输出，通过合成回调在内存收集有界 PCM，再由同属性的 `AudioTrack` 播放。这样能够检查实际播放轨道，而不是把 TTS 的预期路由当作实际输出。仅支持 16 位 PCM、单/双声道；引擎不兼容即失败，不回退到扬声器或临时文件。
-- `goAsync()` 一直持有至播放完成/拒绝/错误/取消/8 秒超时；所有终结路径释放焦点、TTS、轨道及广播。冷启动合成时间也算在 8 秒内，不保证所有设备均能完成。
-- 监听实际路由和设备断连，写入音频块前再次校验。异步路由通知仍有延迟，不能宣称零泄漏保证；必须实测断连和切路由。音乐响应和听感只能由真机确认。
-- 无后台轮询、无 Service、无 WorkManager、无音量修改、无播放器控制。Android/OriginOS 杀进程后，应用不能自行证明未收到的短信或被中断的语音；必须对照外部测试记录。
+goAsync 持有至终结清理；原8秒预算不延长。冻结时 Handler 不保证准时执行，恢复后用 elapsedRealtime 复核超时；PDU临时安全上限120秒，过期或时间差无效拒绝播放。这是阶段0保护，正式产品有效期和并发策略仍待完善。路由变化回调有延迟，不能承诺零音频泄漏。
+
+后续验证包括划走APP、重启恢复、数小时后台、播报中断连/切路由、TTS错误清理、超时过期、密集并发、多设备系统及设置重置。已测连续3条不等于重叠突发队列已通过。当前设备的无Service基线已成立，但系统升级可能改变限制，需要重新验证；FGS不属于当前决策。
+
+阶段1可在上述范围与风险下开始规划：配置引导、状态诊断、隐私约束、有限有效期及失败处理。模式B不进入正式需求或待修复清单；本轮不实施阶段1。
 
 ## 重要文件
 
 | 路径 | 用途 |
 |---|---|
-| `app/src/main/AndroidManifest.xml` | 最小权限与受系统发送权限保护的短信广播 |
-| `app/src/main/java/com/mxy1021/smsvoiceassistant/MainActivity.kt` | Compose 验证界面 |
-| `app/src/main/java/com/mxy1021/smsvoiceassistant/receiver/SmsReceiver.kt` | 真实广播、分段提取与异步生命周期 |
-| `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/OtpParser.kt` | 单一模板识别与逐位中文读法 |
-| `app/src/main/java/com/mxy1021/smsvoiceassistant/bluetooth/BluetoothProbe.kt` | 配对、配置文件连接、预期路由 |
-| `app/src/main/java/com/mxy1021/smsvoiceassistant/audio/SpeechSession.kt` | 离线合成、实际路由、两种焦点、有界清理 |
-| `app/src/test/java/com/mxy1021/smsvoiceassistant/Stage0Test.kt` | 合成数据解析与拒绝路由测试 |
-| `docs/stage0-test-plan.md` | 真机执行与隐私记录规则 |
-| `docs/stage0-report.md` | 实际构建结果、计分与验收结论 |
-
-当前真机验证状态以报告为准。没有真实设备结果时，不具备进入阶段 1 的验收依据。
+| app/src/main/AndroidManifest.xml | 最小权限与受保护SMS接收器 |
+| app/src/main/java/com/mxy1021/smsvoiceassistant/receiver/SmsReceiver.kt | 真实PDU解析、有界异步会话 |
+| app/src/main/java/com/mxy1021/smsvoiceassistant/bluetooth/BluetoothProbe.kt | 指定设备、连接及预期路由 |
+| app/src/main/java/com/mxy1021/smsvoiceassistant/audio/SpeechSession.kt | 已验证的严格离线PCM、实际路由、焦点与清理 |
+| app/src/main/java/com/mxy1021/smsvoiceassistant/sms/SmsSafetyWindow.kt | 阶段0过期和会话预算保护 |
+| scripts/Read-Stage0Log.ps1、scripts/Read-Stage0Process.ps1 | 脱敏事件与只读进程诊断 |
+| docs/stage0-report.md | 当前验收、证据来源与完整历史归档 |
+| docs/stage0-test-plan.md | 当前验收范围及后续边界清单 |
