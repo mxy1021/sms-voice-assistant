@@ -92,6 +92,15 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("SMS Voice Assistant · 阶段 0", style = MaterialTheme.typography.titleLarge)
+            Text("阶段1规则：全文最多80字符，且完整音频≤5秒并满足8秒总预算；超限整条拒绝。")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("仅播报验证码")
+                Switch(settings.otpOnlyEnabled, { app.settings.setOtpOnly(it); app.session?.cancel() })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("精简验证码播报")
+                Switch(settings.otpSimplifyEnabled, { app.settings.setSimplify(it); app.session?.cancel() }, enabled = settings.otpOnlyEnabled)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if (settings.announcingEnabled) "已启用，等待短信" else "已暂停")
                 Switch(checked = settings.announcingEnabled, onCheckedChange = app::setAnnouncingEnabled)

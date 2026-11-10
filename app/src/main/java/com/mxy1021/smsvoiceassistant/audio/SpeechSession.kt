@@ -15,6 +15,7 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import com.mxy1021.smsvoiceassistant.sms.SmsSafetyWindow
+import com.mxy1021.smsvoiceassistant.sms.PcmBudget
 
 /** 一次广播内的有界验证会话：不启动服务，不写入语音或短信文件。 */
 class SpeechSession(
@@ -49,6 +50,7 @@ class SpeechSession(
     private var playbackDone = false
     private var synthesisRequested = false
     private var focusGranted = false
+    @Volatile private var pcmOverflow = false
     private val startElapsed = app.receivedAt(smsEventId) ?: SystemClock.elapsedRealtime()
     private fun mark(point: String, at: Long = SystemClock.elapsedRealtime()) {
         if (fromSms) app.smsTime(smsEventId, point, at)
@@ -211,8 +213,8 @@ class SpeechSession(
         override fun onAudioAvailable(utteranceId: String, audio: ByteArray) {
             synchronized(pcm) {
                 if (ended) return
-                if (pcm.size() + audio.size <= 1024 * 1024) pcm.write(audio)
-                else main.post { end("合成音频超出阶段 0 内存上限") }
+                if (!pcmOverflow && pcm.size() + audio.size <= PcmBudget.MAX_BYTES) pcm.write(audio)
+                else { pcmOverflow = true; main.post { end("合成音频超出内存上限，整条拒绝") } }
             }
         }
         override fun onDone(utteranceId: String) {
@@ -242,9 +244,15 @@ class SpeechSession(
         stage = "PCM 格式校验"
         val data = synchronized(pcm) { pcm.toByteArray().also { pcm.reset() } }
         if (rate !in 8000..48000 || channels !in 1..2 ||
-            encoding != AudioFormat.ENCODING_PCM_16BIT || data.isEmpty()) {
+            encoding != AudioFormat.ENCODING_PCM_16BIT || data.isEmpty() || pcmOverflow) {
             data.fill(0); end("引擎未返回支持的 PCM，拒绝播报"); return
         }
+        val duration = PcmBudget.durationMs(data.size, rate, channels)
+        val elapsed = SystemClock.elapsedRealtime() - startElapsed
+        if (duration == null || !PcmBudget.fits(duration, elapsed)) {
+            data.fill(0); end("完整音频超过5秒或剩余8秒预算不足，整条未播报"); return
+        }
+        record("PCM时长ms", duration)
         log("PCM 格式校验通过；当前才开始请求焦点")
         stage = "音频焦点"
         focus = AudioFocusRequest.Builder(focusMode)
@@ -297,6 +305,9 @@ class SpeechSession(
             log("静音轨道实际路由匹配=$matched；未匹配前不写入语音 PCM")
             record("实际路由", matched)
             if (!matched) { data.fill(0); end("实际播放路由无法确认，拒绝播报"); return }
+            if (!PcmBudget.fits(duration, SystemClock.elapsedRealtime() - startElapsed)) {
+                data.fill(0); end("路由检查后完整音频预算不足，整条未播报"); return
+            }
             submitted = true
             playing = true
             stage = "AudioTrack 播放/完成回调"

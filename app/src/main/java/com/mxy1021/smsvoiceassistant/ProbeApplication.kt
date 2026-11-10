@@ -22,6 +22,7 @@ import com.mxy1021.smsvoiceassistant.settings.PreferenceSettingsStore
 import android.provider.Settings
 
 class ProbeApplication : Application() {
+    val smsReplayGuard = com.mxy1021.smsvoiceassistant.sms.SmsReplayGuard()
     val settings by lazy { SettingsRepository(PreferenceSettingsStore(prefs),
         Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)) }
     val speaking = MutableStateFlow(false)
