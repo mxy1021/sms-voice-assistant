@@ -18,20 +18,42 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mxy1021.smsvoiceassistant.bluetooth.BluetoothProbe
 import com.mxy1021.smsvoiceassistant.sms.OtpParser
+import com.mxy1021.smsvoiceassistant.audio.TtsCompatibilityProbe
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
     private var revision by mutableIntStateOf(0)
+    private var compatibilityRunning by mutableStateOf(false)
+    private var offlineConfirmed by mutableStateOf(false)
+    private lateinit var compatibility: TtsCompatibilityProbe
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         revision++
         app.event("权限流程已返回，请核对实际授权状态")
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        compatibility = newCompatibilityProbe()
         setContent { MaterialTheme { Surface { ProbeScreen() } } }
     }
     override fun onStart() { super.onStart(); app.visible = true; revision++ }
-    override fun onStop() { app.visible = false; super.onStop() }
+    override fun onStop() {
+        compatibility.cancel()
+        offlineConfirmed = false
+        app.visible = false
+        super.onStop()
+    }
+    private fun newCompatibilityProbe() = TtsCompatibilityProbe(this) {
+        compatibilityRunning = false
+        app.compatibilityTestActive = false
+    }
+    private fun testCompatibility() {
+        if (!offlineConfirmed || compatibilityRunning || app.session != null || !app.visible) return
+        compatibility = newCompatibilityProbe()
+        compatibilityRunning = true
+        app.compatibilityTestActive = true
+        revision++
+        compatibility.start()
+    }
     override fun onDestroy() {
         if (app.session?.background == false) app.session?.cancel()
         super.onDestroy()
@@ -39,6 +61,7 @@ class MainActivity : ComponentActivity() {
     @Composable private fun ProbeScreen() {
         val event by app.events.collectAsState()
         val currentRevision = revision
+        val diagnostics by compatibility.diagnostics.collectAsState()
         fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
         var devices by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
         var route by remember { mutableStateOf("未检测") }
@@ -48,6 +71,20 @@ class MainActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("SMS Voice Assistant · 阶段 0", style = MaterialTheme.typography.titleLarge)
             Text("系统 API ${Build.VERSION.SDK_INT}；target 34；compile 36")
+            Text("系统默认中文 TTS 兼容性测试", style = MaterialTheme.typography.titleMedium)
+            Text("请先关闭 Wi-Fi 和移动数据。此测试仅播放固定人工文本，按系统当前输出播放，可能使用扬声器；不检查蓝牙、不请求应用音频焦点。")
+            Row {
+                Checkbox(checked = offlineConfirmed, onCheckedChange = { offlineConfirmed = it }, enabled = !compatibilityRunning)
+                Text("我已关闭 Wi-Fi 和移动数据（人工确认，APP 无法核实）")
+            }
+            Button(onClick = { testCompatibility() }, enabled = offlineConfirmed && !compatibilityRunning && app.session == null) {
+                Text("系统默认中文 TTS 兼容性测试")
+            }
+            Text("固定测试文本：${TtsCompatibilityProbe.TEST_TEXT}")
+            OutlinedButton(onClick = { compatibility.cancel() }, enabled = compatibilityRunning) { Text("停止兼容性测试") }
+            diagnostics.forEach { (label, value) -> Text("$label：$value") }
+            Text("onDone 或非网络 Voice 标记均不代表离线验收通过，必须记录断网条件和实际听感。基础测试成功后，再执行下方原有严格蓝牙/焦点测试。")
+            HorizontalDivider()
             Text("RECEIVE_SMS：${if (granted(Manifest.permission.RECEIVE_SMS)) "已授予" else "未授予"}")
             Text("BLUETOOTH_CONNECT：${if (granted(Manifest.permission.BLUETOOTH_CONNECT)) "已授予" else "未授予"}")
             Button(onClick = { permissionRequest.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.BLUETOOTH_CONNECT)) }) {

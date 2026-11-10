@@ -77,15 +77,26 @@ class SpeechSession(
                 if (!ended) {
                     try {
                         val engine = tts ?: error("未初始化")
-                        if (status != TextToSpeech.SUCCESS || engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE) < 0) {
-                            end("简体中文 TTS 不可用"); return@post
+                        if (status != TextToSpeech.SUCCESS) {
+                            end("严格 TTS 初始化失败，OnInit=$status"); return@post
                         }
-                        val voice = engine.voices?.firstOrNull {
+                        val available = engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE)
+                        if (available < 0) {
+                            end("严格中文语言检测失败，返回值=$available"); return@post
+                        }
+                        val voices = try { engine.voices } catch (_: Exception) {
+                            end("严格 Voice 枚举异常，中文能力未知；请运行手动兼容性测试"); return@post
+                        }
+                        val voice = voices?.firstOrNull {
                             it.locale.language == "zh" && it.locale.country == "CN" && !it.isNetworkConnectionRequired &&
                                 "notInstalled" !in it.features.orEmpty()
                         }
-                        if (voice == null || engine.setVoice(voice) != TextToSpeech.SUCCESS) {
-                            end("未找到已安装的离线简体中文语音"); return@post
+                        if (voice == null) {
+                            end("严格筛选未找到可确认的离线中文 Voice；中文能力未知，请运行手动兼容性测试"); return@post
+                        }
+                        val voiceResult = engine.setVoice(voice)
+                        if (voiceResult != TextToSpeech.SUCCESS) {
+                            end("严格 TTS 设置 Voice 失败，返回值=$voiceResult"); return@post
                         }
                         if (engine.setAudioAttributes(BluetoothProbe.attributes) != TextToSpeech.SUCCESS) {
                             end("TTS 音频属性设置失败"); return@post

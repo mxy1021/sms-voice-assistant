@@ -11,6 +11,7 @@ class ProbeApplication : Application() {
     val main = Handler(Looper.getMainLooper())
     var visible = false
     var session: SpeechSession? = null
+    var compatibilityTestActive = false
     val prefs by lazy { getSharedPreferences("stage0", MODE_PRIVATE) }
     var target: String?
         get() = prefs.getString("target", null)
@@ -28,6 +29,7 @@ class ProbeApplication : Application() {
     }
 
     fun speak(text: String, background: Boolean, finished: () -> Unit = {}) {
+        if (compatibilityTestActive) { event("前台固定文本 TTS 诊断进行中，本次拒绝播报", background); finished(); return }
         if (session != null) { event("忙碌，本次拒绝播报", background); finished(); return }
         val next = SpeechSession(this, background) {
             session = null

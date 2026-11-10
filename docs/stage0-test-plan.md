@@ -23,7 +23,7 @@
 
 4. 正常系统授权界面申请短信和蓝牙连接权限；回到应用核对“已授予”。不可用 `pm grant` 伪造正常授权流程的成功，不以 `install -g` 代替测试。
 5. `RECEIVE_SMS` 为 Hard Restricted Permission，安装器必须允许持有该权限。记录安装来源及实际权限。可在本地查看 `adb shell dumpsys package com.mxy1021.smsvoiceassistant` 中该权限的 granted/flags；该输出可能包含本机数据，禁止原样保存或提交。安装器未允许时，记录“权限限制失败”，不要改成默认短信应用或添加权限。ADB 安装与文件管理器安装应分别记录，不能互相代表。
-6. 在系统中预先配对耳机、下载离线中文语音，回到应用选择目标。本项目不会启动下载语音资源或主动配对流程。
+6. 在系统中预先配对耳机，回到应用选择目标。vivo 已有 AIService TTS 且系统断网朗读成功时，先执行本文新增的基础兼容性测试，不要求安装新引擎。本项目不会主动下载语音资源或启动配对流程。
 
 不得自动清除数据、卸载其他应用、强停系统应用、更改系统后台管理。若用户手动调整 OriginOS 后台设置，应另列一组条件，保留默认设置的原始结果。
 
@@ -50,6 +50,8 @@
 预期：正向路由可证实，所有负向均静默。BLE 地址、匿名地址或厂商映射无法对应时必须失败，不能改成按名称猜测。`routedDevice` 为瞬时观测，异步通知与缓冲有窗口；必须报告动态切换风险，不宣称绝对防泄漏。
 
 ## P0-04：离线中文 TTS（15 分，必过）
+
+先按下文“AIService 兼容性专项”完成基础测试，再执行本节严格蓝牙/焦点路径。基础 `speak()` 成功不代表 `/dev/null` 合成、PCM、路由或后台成功。
 
 1. 耳机和路由确认后测试固定语音：“您收到的网易验证码为四二九三一七。”
 2. 关闭 Wi-Fi 和移动数据，保留 SIM 注册及蜂窝短信，不开启会关闭蜂窝收短信的飞行模式；蓝牙保持打开。重复测试并现场听验。
@@ -107,3 +109,29 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 - [预期音频路由](https://developer.android.com/reference/android/media/AudioManager#getAudioDevicesForAttributes(android.media.AudioAttributes)) 与 [实际播放路由](https://developer.android.com/reference/android/media/AudioTrack#getRoutedDevice())：不同证据。
 - [TTS 音频回调](https://developer.android.com/reference/android/speech/tts/UtteranceProgressListener#onAudioAvailable(java.lang.String,%20byte%5B%5D))：合成结束与实际播放结束分开处理。
 - [音频焦点](https://developer.android.com/media/optimize/audio-focus)：Android 15+ 的前台/前台服务焦点门槛适用于 target 35+。本项目 target 34 不据此推断一定失败或成功；升级 target 后须重测，不承诺未来平台可行性。OriginOS 实际限制只能在指定设备验证。
+
+## AIService 兼容性专项（前台、手动、固定文本）
+
+用户已报告 vivo X200 Pro / OriginOS 7 的系统首选 AIService TTS，在中文（中国）设置下联网与关闭 Wi-Fi、移动数据后均能朗读。此证据只代表系统测试，不等于本 APP 的 Voice 枚举、合成、路由或后台通过；本专项结果全部待验证。
+
+1. 安装最新 Debug APK，进入应用前台。不需要先授权短信或蓝牙、不需要先选耳机。停止音乐及原有严格测试，保持本页可见。
+2. 手动关闭 Wi-Fi 和移动数据，保留蜂窝短信能力；APP 不申请联网/网络状态权限，不能自动证明断网。勾选“我已关闭 Wi-Fi 和移动数据”。
+3. 点击 **“系统默认中文 TTS 兼容性测试”**。固定新句为“语音兼容性测试，验证码七九一四五二。”，只按系统当前输出播放，可能从扬声器输出。不得输入真实验证码。
+4. 等待 OnInit；查询并显示默认引擎名称/包名、语言可用返回值、setLanguage 返回值、Voice 数量及中文 Voice 的 Locale、网络和安装标记。先设置简体中文，有明确离线候选时优先 setVoice；若枚举缺失但初始化与 setLanguage 成功，则直接手动 speak 固定句。
+5. 记录 speak 原始返回值、onStart/onBeginSynthesis/onDone/onError/onStop、失败阶段/错误码与资源释放。运行最多 30 秒；点击停止或离开前台会取消并调用 stop/shutdown。分别测试重复点击、停止、按 Home，确认不继续运行。
+6. 只有断网条件明确、确实听到这次新句且播放完成，才记录“基础前台手动断网播放通过”。元数据或 onDone 单独出现都不足以通过；没有连接真机时仍为“待验证”。
+7. 基础通过后，再使用原来的“检测连接与预期路由”以及“离线中文 / 焦点测试”，核查目标蓝牙身份、实际路由和 A/B 模式。严格筛选继续保留，不因基础测试通过就放宽自动播报。最后才按 E01～10 恢复后台真实 SMS 验证。
+
+默认引擎包名来自 `getDefaultEngine()`，名称来自 `getEngines()`。Android 公开 SDK 不提供当前实际绑定引擎包名查询，本界面明确显示“未知”，不使用反射或把默认值当作实际值。无法查询的 Voice 元数据也显示“未知”，不推断资源缺失。
+
+需要回报的诊断字段：默认引擎名称/包名、实际引擎字段（允许未知）、OnInit、两个语言返回值、Voice 数量、中文 Voice 元数据、setVoice/当前 Voice、speak、完整回调顺序、查询异常、失败阶段/码、释放状态，以及断网人工确认、是否听到完整新句、实际输出位置。只提供本专项字段，不提供完整系统日志、真实短信、号码或设备标识。
+
+| 用例 | 条件/目标 | 实际结果 |
+|---|---|---|
+| T01 | AIService 默认引擎，断网，前台手动新句 | 待验证 |
+| T02 | 枚举为空/未知，但 setLanguage 明确成功 | 待验证；纯逻辑允许不代表设备成功 |
+| T03 | 语言设置失败或初始化失败 | 待验证；应显示阶段和原始码，不播放 |
+| T04 | 停止、Home、超时、重复启动 | 待验证；取消并释放，不后台继续 |
+| T05 | 随后严格蓝牙/焦点，再后台短信 | 待验证；保持原有安全门禁 |
+
+依据：[setLanguage 与近似 Locale 匹配](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setLanguage(java.util.Locale))、[默认引擎字段含义](https://developer.android.com/reference/android/speech/tts/TextToSpeech#getDefaultEngine())、[Voice 网络要求元数据](https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired())。枚举和标记是诊断信息，不能代替本机断网播放实测。
