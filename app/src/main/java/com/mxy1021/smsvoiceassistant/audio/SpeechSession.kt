@@ -279,7 +279,7 @@ class SpeechSession(
         }
         focusGranted = true
         stage = "AudioTrack 初始化/静音实际路由"
-        app.event("焦点已获得；播放器降低音量或暂停及恢复仍待听验", background)
+        app.event("焦点已获得；音乐降低音量及恢复仍待听验", background)
         val mask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
         val minimum = AudioTrack.getMinBufferSize(rate, mask, encoding)
         if (minimum <= 0) { data.fill(0); end("PCM 配置不支持"); return }

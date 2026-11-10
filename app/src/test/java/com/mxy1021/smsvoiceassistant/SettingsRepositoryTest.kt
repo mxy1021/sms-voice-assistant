@@ -76,4 +76,18 @@ class SettingsRepositoryTest {
         rebooted.setEnabled(false)
         assertFalse(SettingsRepository(store, 5).snapshot().announcingEnabled)
     }
+    @Test fun delayedBootBroadcastDoesNotUndoManualEnableAfterUnlock() {
+        val store = MemorySettingsStore()
+        val before = SettingsRepository(store, 1); before.setEnabled(true)
+        val after = SettingsRepository(store, 2)
+        assertFalse(after.snapshot().announcingEnabled)
+        after.setEnabled(true); after.onBoot()
+        assertTrue(after.snapshot().announcingEnabled)
+    }
+    @Test fun unknownBootCountUsesActualBootBroadcastWithoutPausingOnProcessRecreation() {
+        val store = MemorySettingsStore()
+        val repo = SettingsRepository(store, -1); repo.setEnabled(true)
+        assertTrue(SettingsRepository(store, -1).snapshot().announcingEnabled)
+        repo.onBoot(); assertFalse(repo.snapshot().announcingEnabled)
+    }
 }

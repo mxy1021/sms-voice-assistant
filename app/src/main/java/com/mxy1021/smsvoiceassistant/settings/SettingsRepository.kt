@@ -22,7 +22,7 @@ data class AppSettings(
 
 data class SpeechPermit(val generation: Long, val fromSms: Boolean)
 
-class SettingsRepository(private val store: SettingsStore, bootCount: Int) {
+class SettingsRepository(private val store: SettingsStore, private val bootCount: Int) {
     private val lock = Any()
     private var generation = 0L
     private val mutable: MutableStateFlow<AppSettings>
@@ -57,7 +57,11 @@ class SettingsRepository(private val store: SettingsStore, bootCount: Int) {
     fun setSimplify(value: Boolean) = update { if (it.otpOnlyEnabled) it.copy(otpSimplifyEnabled = value) else it }
     fun setBootRestore(value: Boolean) = update { it.copy(bootRestoreEnabled = value) }
     fun selectDevice(value: String?) = update { it.copy(selectedBluetoothDevice = value, setupCompleted = value != null) }
-    fun onBoot() { if (!snapshot().bootRestoreEnabled) setEnabled(false) }
+    fun onBoot() {
+        // For known boot count, init already reconciled this boot before any receiver/UI.
+        // Do not pause a manual enable performed after init but before a delayed boot broadcast.
+        if (bootCount < 0 && !snapshot().bootRestoreEnabled) setEnabled(false)
+    }
     fun permit(fromSms: Boolean): SpeechPermit? = synchronized(lock) {
         if (fromSms && !mutable.value.announcingEnabled) null else SpeechPermit(generation, fromSms)
     }
