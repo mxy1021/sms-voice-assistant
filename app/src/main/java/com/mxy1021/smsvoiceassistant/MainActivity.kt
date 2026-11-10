@@ -72,6 +72,8 @@ class MainActivity : ComponentActivity() {
         val diagnostics by compatibility.diagnostics.collectAsState()
         val timeline by app.timeline.entries.collectAsState()
         val smsState by app.smsState.collectAsState()
+        val smsEvents by app.smsEvents.collectAsState()
+        val audioModes by app.audioModeResults.collectAsState()
         fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
         var devices by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
         var route by remember { mutableStateOf("未检测") }
@@ -122,18 +124,44 @@ class MainActivity : ComponentActivity() {
                 OutlinedButton(onClick = { mode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK; app.mode = mode }) { Text("模式 A") }
                 OutlinedButton(onClick = { mode = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT; app.mode = mode }) { Text("模式 B") }
             }
-            Button(onClick = { app.speak(OtpParser.TEST_TEXT, false) }) { Text("离线中文 / 焦点测试") }
-            Text("原链路：synthesizeToFile → PCM → AudioTrack，8 秒总预算；不调用 speak。")
-            Text("固定合成样例：${OtpParser.TEST_TEXT}")
+            Button(onClick = { app.startAudioModeTest(mode) }) { Text("离线中文 / 焦点测试（A/B 直接播放）") }
+            Text("A/B 和下方已通过的最小测试使用同一播放类、同一固定文本与属性，仅切换焦点 gain。语音与音乐必须分别确认。")
             Button(onClick = { app.startForegroundFocusTest() }) { Text("前台最小焦点播放测试") }
             Text("固定新句：${ForegroundFocusTest.TEST_TEXT}")
             Text("仅前台模拟测试：检查指定耳机连接和预期路由，直接 speak；实际输出需听验，不替代真实短信的实际轨道路由门禁。")
+            audioModes.toSortedMap().forEach { (gain, result) ->
+                Text("${if (gain == 3) "模式 A" else "模式 B"} · ${result.id}", style = MaterialTheme.typography.titleMedium)
+                result.fields.forEach { (field, value) -> Text("$field：$value") }
+                Text("人工语音听验：${result.voiceHeard}；音乐响应：${result.musicResponse}；音乐恢复：${result.musicRecovery}")
+                val ready = result.fields["测试结束"] == "true"
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "语音", "完整有声") }) { Text("语音有声") }
+                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "语音", "无声或不完整") }) { Text("语音未成功") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val response = if (gain == 3) "已降低音量" else "已暂停"
+                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐响应", response) }) { Text(response) }
+                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐响应", "未降低/未暂停") }) { Text("音乐未响应") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐恢复", "已恢复") }) { Text("音乐已恢复") }
+                    OutlinedButton(enabled = ready, onClick = { app.confirmAudioResult(gain, "音乐恢复", "未恢复") }) { Text("音乐未恢复") }
+                }
+            }
+            OutlinedButton(onClick = { app.speak(OtpParser.TEST_TEXT, false) }) { Text("旧 PCM 链路对照（8 秒）") }
+            Text("旧链路：文件合成 → PCM → AudioTrack，不调用 speak；固定人工样例仍为原样例。")
             OutlinedButton(onClick = { app.session?.cancel(); app.foregroundFocus?.cancel() }) { Text("取消并释放焦点") }
             Text("焦点 / 短信时序诊断（最近 120 条，仅内存）", style = MaterialTheme.typography.titleMedium)
             if (timeline.isEmpty()) Text("尚未执行焦点/短信链路")
             timeline.forEach { Text(it) }
             OutlinedButton(onClick = { app.resetSmsObservation() }) { Text("准备本轮短信观察（不发送短信）") }
             smsState.forEach { (key, value) -> Text("短信 $key：$value") }
+            Text("独立 SMS 事件（最近 8 条，仅保存脱敏字段）", style = MaterialTheme.typography.titleMedium)
+            Text("普通短信只查广播；固定模板分别在前台和后台测。未出现编号仅表示尚未观察到广播，系统收信和 AudioHardening 需外部证据。")
+            smsEvents.asReversed().forEach { item ->
+                Text(item.id, style = MaterialTheme.typography.titleMedium)
+                item.fields.forEach { (field, value) -> Text("$field：$value") }
+            }
             Text("最近事件 / TTS 状态：$event")
             Text("最近短信广播：${app.prefs.getString("lastBroadcast", "未验证")}")
             Text("最近后台执行：${app.prefs.getString("lastBackground", "未验证")}")

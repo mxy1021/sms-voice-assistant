@@ -2,7 +2,7 @@
 
 ## 环境与记录边界
 
-计划设备：vivo X200 Pro / OriginOS 7 / Android 16。该组合由用户指定，执行者须在真机设置中核对实际版本，不能当作本次已经连接的设备。
+设备：vivo X200 Pro / OriginOS 7。用户最新报告系统 API 37、targetSdk 34；初始 Android 16 假设不再作为当前系统依据。本次未连接到在线真机，需按末节只读采集复核系统 API。
 
 开发基线：Windows、JDK 17、Gradle 8.13、AGP 8.12.1、Kotlin 2.2.0、Android SDK / compileSdk 36、targetSdk 34、minSdk 33。实际本机结果见验收报告。
 
@@ -108,7 +108,7 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 - [广播异步生命周期](https://developer.android.com/reference/android/content/BroadcastReceiver#goAsync())：异步仍需快速结束，本项目预算 8 秒。
 - [预期音频路由](https://developer.android.com/reference/android/media/AudioManager#getAudioDevicesForAttributes(android.media.AudioAttributes)) 与 [实际播放路由](https://developer.android.com/reference/android/media/AudioTrack#getRoutedDevice())：不同证据。
 - [TTS 音频回调](https://developer.android.com/reference/android/speech/tts/UtteranceProgressListener#onAudioAvailable(java.lang.String,%20byte%5B%5D))：合成结束与实际播放结束分开处理。
-- [音频焦点](https://developer.android.com/media/optimize/audio-focus)：Android 15+ 的前台/前台服务焦点门槛适用于 target 35+。本项目 target 34 不据此推断一定失败或成功；升级 target 后须重测，不承诺未来平台可行性。OriginOS 实际限制只能在指定设备验证。
+- [音频焦点](https://developer.android.com/media/optimize/audio-focus)：Android 15/16 的 target 35+ 规则不能用于排除 Android 17 限制；API 37 须另外按末节 Background Audio Hardening 对所有 target 的规则核查。OriginOS 实际限制须设备证据。
 
 ## AIService 兼容性专项（前台、手动、固定文本）
 
@@ -120,7 +120,7 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 4. 等待 OnInit；查询并显示默认引擎名称/包名、语言可用返回值、setLanguage 返回值、Voice 数量及中文 Voice 的 Locale、网络和安装标记。先设置简体中文，有明确离线候选时优先 setVoice；若枚举缺失但初始化与 setLanguage 成功，则直接手动 speak 固定句。
 5. 记录 speak 原始返回值、onStart/onBeginSynthesis/onDone/onError/onStop、失败阶段/错误码与资源释放。运行最多 30 秒；点击停止或离开前台会取消并调用 stop/shutdown。分别测试重复点击、停止、按 Home，确认不继续运行。
 6. 只有断网条件明确、确实听到这次新句且播放完成，才记录“基础前台手动断网播放通过”。元数据或 onDone 单独出现都不足以通过；没有连接真机时仍为“待验证”。
-7. 基础通过后，再使用原来的“检测连接与预期路由”以及“离线中文 / 焦点测试”，核查目标蓝牙身份、实际路由和 A/B 模式。严格筛选继续保留，不因基础测试通过就放宽自动播报。最后才按 E01～10 恢复后台真实 SMS 验证。
+7. 基础通过后，先用“检测连接与预期路由”和当前“A/B 直接播放”核查焦点/听感，再用“旧 PCM 链路对照（8 秒）”核查严格 Voice/实际轨道。自动短信仍保持严格筛选。最后才按 E01～10 恢复后台真实 SMS 验证。
 
 默认引擎包名来自 `getDefaultEngine()`，名称来自 `getEngines()`。Android 公开 SDK 不提供当前实际绑定引擎包名查询，本界面明确显示“未知”，不使用反射或把默认值当作实际值。无法查询的 Voice 元数据也显示“未知”，不推断资源缺失。
 
@@ -132,7 +132,7 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 | T02 | 枚举为空/未知，但 setLanguage 明确成功 | 待验证；纯逻辑允许不代表设备成功 |
 | T03 | 语言设置失败或初始化失败 | 待验证；应显示阶段和原始码，不播放 |
 | T04 | 停止、Home、超时、重复启动 | 待验证；取消并释放，不后台继续 |
-| T05 | 随后严格蓝牙/焦点，再后台短信 | 原焦点按钮 A/B 无声；后台短信待验证 |
+| T05 | 随后严格蓝牙/焦点，再后台短信 | 旧 A/B 未成功但语音/音乐原因未分清；模板短信已测试，完整节点未验证 |
 
 依据：[setLanguage 与近似 Locale 匹配](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setLanguage(java.util.Locale))、[默认引擎字段含义](https://developer.android.com/reference/android/speech/tts/TextToSpeech#getDefaultEngine())、[Voice 网络要求元数据](https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired())。枚举和标记是诊断信息，不能代替本机断网播放实测。
 
@@ -143,7 +143,7 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 1. 选模式 A，点击 **“前台最小焦点播放测试”**，应听到“前台焦点测试，验证码六八三一九五。”。等待完成后选 B 再测。此按钮使用独立 TTS，检查耳机/预期路由并直接 speak，不使用 PCM 中转，最长 30 秒。实际耳机输出仍需听验，不能仅以预期路由代替。
 2. 每次保留“焦点 / 短信时序诊断”的完整本轮顺序：开始及 gain（A=3、B=2）、连接、预期路由、前置条件、初始化/中文、属性、requestAudioFocus、onAudioFocusChange（可能没有）、真正执行 speak 及返回值、onBeginSynthesis/onStart/onDone/onError/onStop、最终阶段、stop/shutdown 和 abandon 的时点与原因。没有某个回调就是未观测到，不能补造。
 3. 没听到时，优先看最后阶段。焦点返回 0/2 应拒绝播放；返回 1 且 speak=0 但无回调或无声，要按 TTS/属性/输出阶段继续定位。不要直接认定引擎坏了或焦点申请必定失败。基础兼容性采用引擎默认属性，新测试采用 MEDIA/SPEECH，二者差异已显示。
-4. 再点击旧 **“离线中文 / 焦点测试”** 作对照。它明确显示“不调用 speak”，在合成 onDone/PCM 合格后才申请焦点；若日志停在 Voice、文件合成、PCM 或 8 秒超时，说明尚不能指控焦点请求。它的 onDone 是文件合成结束，必须等 AudioTrack 播放标记才算该路径播放完成。
+4. 再点击 **“旧 PCM 链路对照（8 秒）”**（之前的“离线中文 / 焦点测试”实现）作对照。它明确显示“不调用 speak”，在合成 onDone/PCM 合格后才申请焦点；若日志停在 Voice、文件合成、PCM 或 8 秒超时，说明尚不能指控焦点请求。它的 onDone 是文件合成结束，必须等 AudioTrack 播放标记才算该路径播放完成。
 5. 两种模式分别在音乐播放时测 3 轮，记录降低音量/暂停及结束后的恢复；再测取消、离开前台、断开耳机、切换非目标输出、未选设备。正常最小测试须在 speak onDone 后释放；异常/取消/超时早于 onDone 释放是预期清理，必须附原因。模式在启动时固定，中途切换只用于下轮。
 6. 前台最小链路成功后，点击 **“准备本轮短信观察（不发送短信）”**，由另一端发送真实新 SMS。分别做普通不匹配文本、受控模板、耳机未连、输出不匹配，再做前台/后台/划走/锁屏。查看广播/解析/模板/蓝牙/路由/焦点/TTS/后台八栏，并对照时间线。报告只记阶段和结果，不记真实内容。
 
@@ -159,3 +159,52 @@ Android 的“划走”与系统设置“强行停止”不同，后者通常阻
 | F07 | 短信阶段逐项可辨，后台失败不虚构原因 | 待真实短信验证 |
 
 官方说明：[synthesizeToFile](https://developer.android.com/reference/android/speech/tts/TextToSpeech#synthesizeToFile(java.lang.CharSequence,%20android.os.Bundle,%20android.os.ParcelFileDescriptor,%20java.lang.String)) 与 [onDone](https://developer.android.com/reference/android/speech/tts/UtteranceProgressListener#onDone(java.lang.String)) 区分文件合成结束和 speak 播放结束；[音频焦点](https://developer.android.com/media/optimize/audio-focus) 要求请求与播放属性一致，焦点结果与播放器实际行为分别核验。
+
+## 本轮 A/B 与独立 SMS 事件验收（API 37）
+
+已确认：基础兼容性和“前台最小焦点播放测试”均从指定蓝牙耳机有声。该最小按钮仍作为对照。尚不能判断先前 A/B 未成功属于语音失败还是音乐协调失败；用户做过固定模板前后台测试，但没有完整事件证据，最终节点未验证。
+
+### A/B 同路径
+
+1. 安装本轮 APK，确认系统 API，保持断网、同一耳机和相同系统媒体输出。先点击原“前台最小焦点播放测试”作对照，原流程未重写。
+2. 模式 A → **“离线中文 / 焦点测试（A/B 直接播放）”**，完成后模式 B → 同一按钮。二者现在都调用同一 `ForegroundFocusTest`、相同属性和固定文本，只改变 gain：A=3、B=2。旧实现移至 **“旧 PCM 链路对照（8 秒）”**，仍可排查，不混入新 A/B 结果。
+3. 对每个 AUDIO 编号保存模式、前台状态、连接/路由/前置条件、焦点实际结果、speak 调用和返回、onStart/onDone/onError、abandon 时点/返回和最终 API 结果。结果只代表 API，不代表听感。
+4. 现场分别点击人工“语音有声/语音未成功”“已降低音量/已暂停/音乐未响应”“音乐已恢复/未恢复”。没有音乐播放时音乐两项保持“未验证”。onDone 不能自动填充任何人工结果。A/B 只保留各自最近一次结果（内存），每轮重新初始化人工项，需外部记录 3 轮而非假设前次结果复用。
+5. 先无音乐判断 TTS，再有音乐判断协调。前置条件失败、焦点失败、TTS 错误、onDone 但无声、语音有声但音乐不响应，必须单列。
+
+### 两类短信，前后台分开
+
+每次真实 SMS 自动生成独立 `SMS-xxxxxx`，最近 8 条脱敏字段保存在本机配置供重进页面核对。不保存正文、验证码、发送方、设备地址或原始系统日志；没有新编号仅表示应用未观察到广播，不能说明系统没有收信。
+
+| 用例 | 从另一部手机发送 | APP 状态 | 核验重点 | 实际 |
+|---|---|---|---|---|
+| S-A-F | 普通不含验证码短信 | 前台 | SMS_RECEIVED、解析；模板不命中是预期，不播放 | 未验证 |
+| S-A-B | 普通不含验证码短信 | Home 后后台 | 独立编号及真实后台广播；不播放 | 未验证 |
+| S-B-F | 【网易】验证码：429317，您正在登录网易手机账号。 | 前台 | 模板/格式、蓝牙/路由、焦点、实际播放及终结 | 用户已做测试，完整节点证据未验证 |
+| S-B-B | 同一人工模板 | Home 后后台 | 上述字段及焦点时前台状态、接收器 finish、系统证据 | 用户已做测试，完整节点证据未验证 |
+
+每条回报编号、开始毫秒、API/target、APP 前台、解析、模板、验证码格式、目标连接、预期和实际路由、requestAudioFocus、speak 调用、onStart/onDone/onError、实际播放完成、最终失败节点、最终结果、接收器 finish。格式诊断不改变原模板准入。
+
+真实短信继续走严格 PCM/实际路由链路，不把人工 speak 的预期路由证明当成真实码自动播报的实际路由证明。因此事件中 `speak调用=false（严格PCM）` 是明确的实现事实，合成 onDone 仍需与 AudioTrack 完成区分。goAsync 覆盖至清理结束；finish 后不再有意延续播报。进程中止后的未终结记录只表示未知，不伪称系统已拦截。
+
+### Android 17 只读证据
+
+依据 [Background Audio Hardening](https://developer.android.com/about/versions/17/changes/bg-audio) 和 [所有应用的行为变更](https://developer.android.com/about/versions/17/behavior-changes-all)：API 37 的后台音频门槛适用于所有 target，target 34 不豁免；需要可见 Activity 或非 SHORT_SERVICE 的前台服务。无合法生命周期时焦点可能返回失败，播放可能静默被抑制。SMS 广播到达、goAsync 和 TTS 成功回调均不等同于获得后台音频资格。
+
+本轮不修改任何系统开关。连接唯一已授权设备后，在测试前记录起点并采集：
+
+```powershell
+$testStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+# 执行一轮前台或后台测试后，仅取脱敏白名单输出。
+pwsh -File .\scripts\Read-AudioHardening.ps1 -SinceEpochMillis $testStart
+```
+
+主机与手机时钟若不同，请用应用 SMS 的“开始毫秒”或 AUDIO 编号中的设备时间替换 `$testStart`；也可不传时间参数后人工对照。不要把因时钟不一致被过滤的记录误判为不存在拦截。
+
+脚本只执行 devices、getprop、dumpsys package/audio、logcat 读取，不清日志、不改变 hardening 或权限、不写原始日志。输出系统 API、target、匹配本包的 AudioHardening 条目数、level、时间、API 类别。`partial` 表示记录中没有前台服务，`full` 表示存在服务但没有 WIU；必须按事件开始毫秒核对。dumpsys 中未知时间条目可能是历史记录；无匹配不能证明未开启，仍写“未验证”。首次运行检测不到唯一在线设备时不读取日志。
+
+原始日志中的本包 AudioHardening 条目是关键证据；过滤采集保留其存在与等级等白名单字段，不回显原行、UID、设备标识或其他 APP 数据。只回传脚本脱敏 JSON 与应用事件字段，不提交完整 Logcat/dumpsys。
+
+官方还区分普通 SMS 与 Retriever Hash/WebOTP 的分发延迟；API 37、target 34 不能直接套用 target 37 的普通 OTP 规则。先用普通 SMS 对照，不能从缺少模板广播直接推断音频限制。
+
+若同一设备前台成功、后台焦点失败，且同时间本包出现 AudioHardening 记录，再认定相关后台路径受限。没有该证据时保留代码、引擎、广播分发、进程生命周期等候选。禁止以禁用 hardening、降低 target 或新增隐蔽保活作为验收。

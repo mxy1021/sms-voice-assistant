@@ -6,6 +6,11 @@ import android.os.Looper
 import com.mxy1021.smsvoiceassistant.audio.SpeechSession
 import com.mxy1021.smsvoiceassistant.audio.DiagnosticTimeline
 import com.mxy1021.smsvoiceassistant.audio.ForegroundFocusTest
+import com.mxy1021.smsvoiceassistant.audio.AudioModeResult
+import com.mxy1021.smsvoiceassistant.sms.SmsDiagnosticEvent
+import android.os.Build
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class ProbeApplication : Application() {
@@ -16,6 +21,95 @@ class ProbeApplication : Application() {
     var compatibilityTestActive = false
     var foregroundFocus: ForegroundFocusTest? = null
     val timeline = DiagnosticTimeline()
+    val audioModeResults = MutableStateFlow<Map<Int, AudioModeResult>>(emptyMap())
+    private var audioSequence = 0
+    val smsEvents by lazy {
+        val restored = runCatching {
+            val array = JSONArray(prefs.getString("smsEvents", "[]"))
+            (0 until array.length()).map { index ->
+                val item = array.getJSONObject(index)
+                val data = item.getJSONObject("fields")
+                val fields = data.keys().asSequence().associateWith { data.getString(it) }.toMutableMap()
+                if (fields["接收器finish"] == "等待") {
+                    fields["最终结果"] = "上次处理未终结，原因未知"
+                    fields["后台限制"] = "未验证，需要 AudioHardening 或其他系统证据"
+                }
+                SmsDiagnosticEvent(item.getString("id"), fields.toMap())
+            }
+        }.getOrDefault(emptyList())
+        MutableStateFlow(restored)
+    }
+    private fun saveSmsEvents() {
+        val data = JSONArray()
+        smsEvents.value.forEach { event ->
+            data.put(JSONObject().put("id", event.id).put("fields", JSONObject(event.fields)))
+        }
+        prefs.edit().putString("smsEvents", data.toString()).apply()
+    }
+    fun beginSmsEvent(): String {
+        val sequence = prefs.getLong("smsSequence", 0) + 1
+        prefs.edit().putLong("smsSequence", sequence).apply()
+        val id = "SMS-${sequence.toString().padStart(6, '0')}"
+        val fields = listOf("解析", "模板", "验证码格式", "目标耳机连接", "预期路由", "实际路由", "requestAudioFocus", "onStart", "onDone", "onError")
+            .associateWith { "未执行/未观测" } + mapOf(
+                "SMS_RECEIVED" to "已触发", "APP前台" to visible.toString(),
+                "系统API" to Build.VERSION.SDK_INT.toString(), "targetSdk" to applicationInfo.targetSdkVersion.toString(),
+                "开始毫秒" to System.currentTimeMillis().toString(), "gain" to mode.toString(),
+                "speak调用" to "未调用（短信仍为严格文件合成/PCM路径）",
+                "最终失败节点" to "未终结", "最终结果" to "处理中", "接收器finish" to "等待",
+                "后台限制" to "未验证，不能由 API 37 或无声直接推断")
+        smsEvents.value = (smsEvents.value + SmsDiagnosticEvent(id, fields)).takeLast(8)
+        saveSmsEvents()
+        timeline.add("[$id] SMS_RECEIVED 已触发，APP前台=$visible，API=${Build.VERSION.SDK_INT}")
+        return id
+    }
+    fun updateSmsEvent(id: String?, field: String, value: String) {
+        if (id == null) return
+        smsEvents.value = smsEvents.value.map { if (it.id == id) it.copy(fields = it.fields + (field to value)) else it }
+        saveSmsEvents()
+        timeline.add("[$id] $field=$value")
+    }
+    fun finishSmsEvent(id: String) {
+        updateSmsEvent(id, "接收器finish", "已调用，时间=${System.currentTimeMillis()}")
+    }
+    fun startAudioModeTest(selectedMode: Int) {
+        if (session != null || foregroundFocus != null || compatibilityTestActive) {
+            timeline.add("A/B 点击被拒绝：已有测试运行，不覆盖其编号或结果"); return
+        }
+        if (session == null && foregroundFocus == null && !compatibilityTestActive) timeline.reset()
+        val id = "AUDIO-${System.currentTimeMillis()}-${++audioSequence}"
+        val defaults = listOf("目标耳机连接", "预期路由", "前置条件", "requestAudioFocus", "speak 返回", "onStart", "onDone", "onError", "onAudioFocusChange", "abandon 时点")
+            .associateWith { "未执行/未观测" } + mapOf("模式/gain" to selectedMode.toString(), "APP 前台" to visible.toString(), "speak 调用" to "false", "测试结束" to "false")
+        val record = AudioModeResult(id, selectedMode, defaults)
+        audioModeResults.value = audioModeResults.value + (selectedMode to record)
+        timeline.add("[$id] A/B 直接播放；gain=$selectedMode，前台=$visible；语音与音乐分别记录")
+        fun update(field: String, value: String) {
+            val current = audioModeResults.value[selectedMode] ?: return
+            if (current.id == id) audioModeResults.value = audioModeResults.value +
+                (selectedMode to current.copy(fields = current.fields + (field to value)))
+        }
+        if (!visible || compatibilityTestActive || session != null || foregroundFocus != null || selectedMode !in setOf(2, 3)) {
+            update("最终失败节点", "启动门禁：非前台、忙碌或模式无效")
+            update("前置条件", "false"); update("测试结束", "true")
+            timeline.add("[$id] 启动被拒绝，未调用 speak"); return
+        }
+        // 和已通过的对照按钮实例化同一播放类，仅 gain 不同；观察器不参与播放判断。
+        val next = ForegroundFocusTest(this, selectedMode, observe = { update(it.field, it.value) }) { foregroundFocus = null }
+        foregroundFocus = next
+        next.start()
+    }
+    fun confirmAudioResult(mode: Int, field: String, value: String) {
+        val record = audioModeResults.value[mode] ?: return
+        if (record.fields["测试结束"] != "true") return
+        val changed = when (field) {
+            "语音" -> record.copy(voiceHeard = value)
+            "音乐响应" -> record.copy(musicResponse = value)
+            "音乐恢复" -> record.copy(musicRecovery = value)
+            else -> return
+        }
+        audioModeResults.value = audioModeResults.value + (mode to changed)
+        timeline.add("[${record.id}] 人工确认$field=$value（不是 API 推断）")
+    }
     private val smsKeys = listOf("广播", "解析", "模板", "蓝牙", "路由", "焦点", "TTS", "后台")
     val smsState by lazy {
         val restored = smsKeys.associateWith { prefs.getString("sms_$it", "未验证") ?: "未验证" }.toMutableMap()
@@ -67,15 +161,19 @@ class ProbeApplication : Application() {
         if (background) prefs.edit().putString("lastBackground", value).apply()
     }
 
-    fun speak(text: String, background: Boolean, finished: () -> Unit = {}, fromSms: Boolean = false) {
+    fun speak(text: String, background: Boolean, finished: () -> Unit = {}, fromSms: Boolean = false, smsEventId: String? = null) {
         if (session == null && foregroundFocus == null && !compatibilityTestActive && !fromSms) timeline.reset()
         timeline.add("进入${if (fromSms) "真实短信严格链路" else "离线中文 / 焦点测试按钮"}；gain=$mode，后台=$background")
         if (compatibilityTestActive || foregroundFocus != null || session != null) {
             timeline.add("播放前置条件=false：另一测试正在运行；最终失败阶段=启动门禁")
-            if (fromSms) { smsStatus("TTS", "模板已匹配，但另一测试忙碌，未启动"); smsFinished() }
+            if (fromSms) {
+                smsStatus("TTS", "模板已匹配，但另一测试忙碌，未启动"); smsFinished()
+                updateSmsEvent(smsEventId, "最终失败节点", "播放前置条件：另一测试忙碌")
+                updateSmsEvent(smsEventId, "最终结果", "拒绝播放，未调用 speak")
+            }
             event("忙碌，本次拒绝播报", background); finished(); return
         }
-        val next = SpeechSession(this, background, mode, fromSms) {
+        val next = SpeechSession(this, background, mode, fromSms, smsEventId) {
             session = null
             if (fromSms) smsFinished()
             finished()
