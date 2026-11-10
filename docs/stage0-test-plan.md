@@ -2,7 +2,7 @@
 
 ## 环境与记录边界
 
-设备：vivo X200 Pro / OriginOS 7。用户最新报告系统 API 37、targetSdk 34；初始 Android 16 假设不再作为当前系统依据。本次未连接到在线真机，需按末节只读采集复核系统 API。
+设备：vivo X200 Pro / OriginOS 7。本轮 ADB 已实读 Android 17 / API 37、targetSdk 34，两项权限及 AppOps 均允许。初始 Android 16 假设不再作为依据；以前“无在线设备”的结果为历史记录。
 
 开发基线：Windows、JDK 17、Gradle 8.13、AGP 8.12.1、Kotlin 2.2.0、Android SDK / compileSdk 36、targetSdk 34、minSdk 33。实际本机结果见验收报告。
 
@@ -205,6 +205,25 @@ pwsh -File .\scripts\Read-AudioHardening.ps1 -SinceEpochMillis $testStart
 
 原始日志中的本包 AudioHardening 条目是关键证据；过滤采集保留其存在与等级等白名单字段，不回显原行、UID、设备标识或其他 APP 数据。只回传脚本脱敏 JSON 与应用事件字段，不提交完整 Logcat/dumpsys。
 
+必须排除 SVA_STAGE0 自身提到 AudioHardening 的诊断文字；系统记录如果只写 would，也不能据此补造焦点返回失败或实际静音。记录 exemption、厂商拦截标记与实际 API/听感，三者有差异时保留差异。
+
 官方还区分普通 SMS 与 Retriever Hash/WebOTP 的分发延迟；API 37、target 34 不能直接套用 target 37 的普通 OTP 规则。先用普通 SMS 对照，不能从缺少模板广播直接推断音频限制。
 
 若同一设备前台成功、后台焦点失败，且同时间本包出现 AudioHardening 记录，再认定相关后台路径受限。没有该证据时保留代码、引擎、广播分发、进程生命周期等候选。禁止以禁用 hardening、降低 target 或新增隐蔽保活作为验收。
+
+## 已启用的 ADB 实时验证
+
+1. 连接唯一授权真机，确认型号/API/包名；只安装本项目构建的 APK，使用 `install -r` 保留数据，不使用清数据或卸载解决签名问题。手机端拒绝时由用户确认后重试，不绕过。
+2. 应用统一输出 `SVA_STAGE0` 脱敏 JSON。持续采集命令：
+
+   ```powershell
+   pwsh -File .\scripts\Read-Stage0Log.ps1 -Follow -Save -Quiet
+   ```
+
+   已明确选取唯一在线设备，离线模拟器不会被误选。不使用固定 PID，避免冷进程重启后漏日志。Save 仅写忽略目录的 `live.jsonl`；Quiet 避免终端输出背压阻塞文件采集。无需清空手机日志。
+3. 用 `Read-AudioHardening.ps1` 读取系统白名单摘要；没有开关查询不假称关闭。本轮实际只见本包系统 would/partial 检查，焦点仍返回 1，保留这项事实差异。
+4. 原始 UI XML 只在手机临时目录用于定位本应用已知按钮；不展示其他应用、通知或真实 SMS 内容。自动操作只触发固定人工文本，不将其当作真实短信测试。
+5. Locale 回归：严格链路必须接受已明确离线且已安装的 zh-Hans；未知网络/安装标记、网络 Voice、繁体/其他语言仍拒绝。修复没有给真实 SMS 增加默认语音回退。
+6. 以报告末节实际 SMS 编号为证据。SMS-000007 虽在接收时后台，焦点申请时已前台，不能误判全程后台通过；API 完成但用户听感无声也必须失败/待定位。
+
+下一轮只做报告所列的无音乐前台成对对照及后台两类短信分离，不连点播报按钮，避免忙碌拒绝混入。需要用户提供的是编号、阶段和听感，禁止提供正文、实际验证码、号码或带隐私截图。

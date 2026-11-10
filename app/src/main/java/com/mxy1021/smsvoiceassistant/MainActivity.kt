@@ -20,6 +20,7 @@ import com.mxy1021.smsvoiceassistant.bluetooth.BluetoothProbe
 import com.mxy1021.smsvoiceassistant.sms.OtpParser
 import com.mxy1021.smsvoiceassistant.audio.TtsCompatibilityProbe
 import com.mxy1021.smsvoiceassistant.audio.ForegroundFocusTest
+import com.mxy1021.smsvoiceassistant.audio.Stage0Log
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
@@ -36,13 +37,14 @@ class MainActivity : ComponentActivity() {
         compatibility = newCompatibilityProbe()
         setContent { MaterialTheme { Surface { ProbeScreen() } } }
     }
-    override fun onStart() { super.onStart(); app.visible = true; revision++ }
+    override fun onStart() { super.onStart(); app.visible = true; revision++; Stage0Log.state("lifecycle", "Activity", "onStart；前台=true") }
     override fun onStop() {
         compatibility.cancel()
         if (app.foregroundFocus != null) app.timeline.add("Activity.onStop：取消前台最小焦点测试")
         app.foregroundFocus?.cancel()
         offlineConfirmed = false
         app.visible = false
+        Stage0Log.state("lifecycle", "Activity", "onStop；前台=false")
         super.onStop()
     }
     private fun newCompatibilityProbe() = TtsCompatibilityProbe(this) {

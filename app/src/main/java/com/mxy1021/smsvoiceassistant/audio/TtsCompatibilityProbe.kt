@@ -39,6 +39,7 @@ class TtsCompatibilityProbe(context: Context, private val finished: () -> Unit) 
     private fun put(key: String, value: String) {
         fields[key] = value
         diagnostics.value = fields.toMap()
+        Stage0Log.state("tts-compatibility", key, value)
     }
 
     private fun <T> query(label: String, action: () -> T): T? = try { action() }

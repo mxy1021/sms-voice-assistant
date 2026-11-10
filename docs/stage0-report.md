@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-阶段 0 原型代码已实现。用户最新确认：vivo 报告 API 37、target 34，离线兼容性与前台最小焦点播放均从指定耳机有声。A/B 未成功尚不能区分语音与音乐协调，固定模板短信已做过前后台测试但完整失败节点未知。本轮统一 A/B 路径、分离人工听验/音乐结果并增加独立 SMS 事件；新结果未验证。阶段 0 仍不通过，不进入阶段 1。下文保留历史，最新结论见末节。
+阶段 0 已进入 ADB 真机实测。已确认 Android 17/API 37、两项权限与 AppOps 允许，保留数据更新成功，实时脱敏日志可用。已定位并修复 AIService `zh-Hans` 被旧地区筛选拒绝的问题；前台直接播放及修复后的手动 PCM 样例有声，但用户反馈模板短信前后台听感仍未成功，音乐未降低/暂停。阶段 0 仍不通过，不进入阶段 1。下文保留历史，最新证据见末节“ADB 真机自动化验证”。
 
 ## 初始目录与远程核查
 
@@ -261,3 +261,74 @@ vivo X200 Pro / OriginOS 7：APP 识别默认 AIService TTS，关闭 Wi-Fi 和�
 - 只读采集脚本：无在线设备分支实际运行；模拟输入检查覆盖本包匹配、时间/等级提取和原行/设备标识不回显，属于脚本检查，非 AudioHardening 真机验证。
 
 提交信息：`fix: isolate audio focus modes and SMS playback failures`，仅普通推送 origin/main。最终 SHA 与远程复核见交付消息/Git 历史。阶段 0 未通过，不进入阶段 1。
+
+## ADB 真机自动化验证（2026-11-11，最新）
+
+### 环境、安装与数据保护
+
+| 项目 | 实际结果 |
+|---|---|
+| 设备 | 唯一在线授权 vivo，型号 V2405A；另有 1 个离线模拟器，已明确选择在线目标，未输出序列号 |
+| 系统 | ADB 实读 Android 17 / API 37；不是先前的版本推测 |
+| 应用 | 原已安装，包名 com.mxy1021.smsvoiceassistant，targetSdk 34 |
+| 权限 | RECEIVE_SMS、BLUETOOTH_CONNECT 更新前后均 granted=true；AppOps 均 allow |
+| 包状态 | stopped=false、suspended=false，进程存在 |
+| 更新 | 本地源码生成 APK，核对包名后 install -r；手机首次拒绝安装，用户确认后更新成功 |
+| 数据保留 | 两次成功更新的前后应用配置指纹一致；未卸载、清数据或改权限 |
+| 网络 | 初轮直接播放时 Wi-Fi 开关 1、移动数据 0；用户按指令关闭 Wi-Fi 后，ADB 实读两者均 0。不能把初轮当作新的断网证据 |
+
+只读检查未通过 ADB 查询系统短信正文/收件箱，未输出手机号、验证码、蓝牙地址、设备序列号或原始个人日志。没有 Root、改安全开关、强停、恢复出厂或操作第三方播放器。
+
+### 统一日志与采集
+
+新增 `Stage0Log`，统一标签 `SVA_STAGE0`，schema=1，字段为 package、epochMs、elapsedMs、kind、field、value 和可选 id。只接收开发者阶段状态及引擎/Locale 元数据，不记录短信正文、实际数字、发送方、音频内容或异常正文。覆盖界面生命周期、初始化、焦点、speak、回调、严格合成与 SMS 编号。
+
+`Read-Stage0Log.ps1` 只选取该标签和既定 JSON 字段；脱敏流保存在忽略目录 `app/build/stage0-device/live.jsonl`，不会提交。后台采集使用 Quiet 避免输出缓冲阻塞采集，按需读取本地摘要。`Read-AudioHardening.ps1` 明确选择唯一在线设备，并排除 SVA_STAGE0 自身提及 AudioHardening 的文字，避免把自日志误报为系统证据；只提取等级、时间、would、exemption、厂商标记等白名单字段。
+
+### 第一个已确证故障及修复
+
+修复前在同一手机重现旧 PCM 固定样例：蓝牙已连接、预期路由通过、OnInit=0、中文支持=0、getVoices=283，但严格候选=false；约 0.1 秒内在“严格中文语言/Voice 筛选”退出。合成请求、焦点请求和播放均未执行，清理 stop 是失败后的处理，不是导致本次无声的提前停止。
+
+同机直接播放选中 `zh-Hans`，setVoice=0。旧门禁只认 `language=zh && country=CN`，把无 country 的简体脚本 Voice 排除，错误发生在焦点之前。此处是代码与实时日志共同证明的首个故障，不再把它归因于 TTS 引擎故障或焦点失败。
+
+新增 `OfflineVoicePolicy` 接受简体脚本 Locale，同时仍要求 networkRequired=false、notInstalled=false，未知或网络 Voice 均拒绝，真实短信不做兼容性回退。修复后真机找到 2 个严格离线候选，选择 zh-Hans（网络=false、notInstalled=false），文件合成返回 0，PCM 校验通过，焦点=1，实际 AudioTrack 路由匹配，收到播放完成标记。用户确认手动旧 PCM 固定样例完整有声。
+
+### 本轮实际结果
+
+| 测试 | API / 现场证据 | 听感或验收结论 |
+|---|---|---|
+| 最小焦点对照 | 焦点=1，speak=0，onStart/onDone，释放=1，释放在 onDone 后 | 用户确认完整有声 |
+| A/B 直接播放 | 观察到 gain=3、gain=2 的完整回调，焦点=1、speak=0、释放=1，未观测 onError | 用户确认语音完整有声；音乐未降低或暂停，协调不通过；不把每一轮 B 听感单独补造 |
+| 修复前旧 PCM | 严格 Voice 为空，未申请焦点 | 首个失败点明确：Locale 筛选 |
+| 修复后旧 PCM 手动样例 | zh-Hans 严格候选通过，焦点=1，实际路由=true，播放标记完成 | 用户确认完整有声 |
+| SMS-000003 / 000004 | 真实广播到达、解析成功、格式=false、模板=false，finish 完成 | 普通广播与拒绝非模板路径通过，不应播报 |
+| SMS-000005 | 格式=true 但模板=false，未启动播放 | 明确停在模板未命中；未读取正文推测具体差异，不擅改规则 |
+| SMS-000001 / 000006 | 前台真实模板匹配，焦点=1、实际路由=true，轨道标记和 finish 均完成 | 用户反馈前台模板语音无声或不完整；不能以 API 回调宣布通过 |
+| SMS-000002 | 接收及焦点时均后台，模板匹配、焦点=1、路由=true、完成标记与 finish 到达 | 未单独获得该轮听感；同期有系统 AudioHardening 检查记录，后台通过未成立 |
+| 明确 Home 后台复测 / SMS-000007 | 用户确认系统收信；最初无新编号。恢复界面附近才记录广播，约 14ms 后 onStart，申请焦点时 APP 已前台，随后回调完成 | 用户反馈后台无声/不完整；该事件不能作为全程后台完成的证据，延迟投递/进程调度原因未确证 |
+
+多次真实短信均未保存或输出内容。SMS-000001/000006 等严格链路不使用 speak，字段 false 是实现事实；文件合成 onDone 与实际轨道标记分别核验。所观察轮次清理和 pending.finish 在播放标记之后，没有提前返回后仍假设后台协程能完成。
+
+### 剩余失败节点及 AudioHardening
+
+1. **已修正的首个代码故障**：Voice Locale 筛选。真机固定样例证实修复越过该节点并有声。
+2. **修复后前台模板的首个未通过验收点**：实际耳机声音。代码侧已到播放完成标记，未返回错误，但用户听感不通过；尚不能进一步确定为静音、掩蔽、设备切换或其他机制，不能虚构某个 API 失败。
+3. **明确 Home 后台复测的首个异常观测点**：广播/处理未及时在后台被观察到，恢复前台附近才进入 SMS-000007；发送成功不等于应用已实时收到。原因为投递限制还是进程调度/冻结未知。
+4. **系统证据**：dumpsys audio 有本包 partial 级焦点和播放检查记录，措辞为 would；焦点记录含 exemption=6、vivoblocked=true。不能未经厂商语义确认就解释为明确的拒绝返回。本轮实际焦点是 1，不是 0。Logcat 中 SVA_STAGE0 自己提及 AudioHardening 的两行已排除，不作为系统证据。可确认检查发生，不能断言所有前台/后台无声都由同一 hardening 原因造成。
+5. **音乐协调**：用户确认同一 vivo 上的音乐未降低/暂停；播放器名称未补充，焦点成功并不证明它响应。未通过调音量或控制播放器制造成功。
+
+官方 [Android 17 后台音频规则](https://developer.android.com/about/versions/17/changes/bg-audio) 对 target 34 也适用，仍是后台设计的重要约束；本机 OEM 的 would/豁免标记与实际行为需要分别记录。本轮不添加 Service、不开关限制、不降 target。正式后台架构需要结合真实后台听感和投递/音频证据重新决策，不能现在宣称无 Service 全后台已可行。
+
+### 后续有限复测
+
+手动暂停音乐后，在同一耳机和前台界面做一组“旧 PCM 固定样例 → 真实模板 SMS”对照，分别记录声音和新 SMS 编号；只对已有阶段记录进行分析，不读取正文改规则。随后后台普通 SMS 与模板分开测试，记录系统确认收信时间、应用 SMS_RECEIVED、Activity onStart/onStop、焦点时前台状态、实际听感，判断延迟投递与静默播放是否为不同问题。锁屏、划走、长时间静置及音乐恢复仍未完成完整验收。
+
+### 本轮构建与交付
+
+- 修复后执行 `gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --console=plain`，`BUILD SUCCESSFUL in 10s`，51 项任务（15 项执行、36 项缓存最新）。
+- 12 项单元测试通过，0 失败、0 错误、0 跳过；其中新增 3 项严格离线 Locale 回归测试。Lint 0 错误、13 警告，未禁用检查。
+- 最新 APK：`app/build/outputs/apk/debug/app-debug.apk`，24,129,306 字节；SHA-256：`BA09663D9832A54C6F48E557AB1BDCE620F3BE050D4135CF88D98276F6BAF5D6`。已保留数据安装到目标真机。
+- APK 实查仍只请求 RECEIVE_SMS、BLUETOOTH_CONNECT；Manifest、targetSdk、OtpParser 和无 Service 架构未改。未上传 APK、原始系统日志、UI XML 或本机诊断文件。
+- 本轮仅提交相关 Kotlin 源码、回归测试、两份阶段文档及两个脱敏采集脚本。最终提交 SHA、正常推送及远程一致性以交付消息和 Git 历史核验为准。
+
+真机已参与且获得有效证据，但短信听感、音乐协调及完整后台矩阵仍未通过，**阶段 0 仍未通过验收，不进入阶段 1**。

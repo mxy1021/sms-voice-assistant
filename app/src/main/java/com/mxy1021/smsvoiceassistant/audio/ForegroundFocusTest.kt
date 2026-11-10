@@ -35,7 +35,10 @@ class ForegroundFocusTest(
         }
     }
     private fun log(value: String) = app.timeline.add(value)
-    private fun report(field: String, value: Any?) = observe(FocusObservation(field, value?.toString() ?: "未知"))
+    private fun report(field: String, value: Any?) {
+        Stage0Log.state("focus", field, value?.toString() ?: "未知")
+        observe(FocusObservation(field, value?.toString() ?: "未知"))
+    }
 
     fun start() {
         report("模式/gain", mode)
@@ -79,6 +82,7 @@ class ForegroundFocusTest(
     }
     private fun initialized(result: Int) {
         log("OnInit=$result")
+        report("OnInit", result)
         if (result != TextToSpeech.SUCCESS) return end("初始化失败", false)
         try {
             val tts = engine ?: return end("TTS 实例为空", false)

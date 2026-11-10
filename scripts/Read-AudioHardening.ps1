@@ -5,8 +5,9 @@ param([long]$SinceEpochMillis = 0)
 $ErrorActionPreference = 'Stop'
 $package = 'com.mxy1021.smsvoiceassistant'
 $packagePattern = '(?<![\w.])' + [regex]::Escape($package) + '(?![\w.])'
+$svaDevice = $null
 function Read-Adb([string[]]$Arguments) {
-    $result = & adb @Arguments 2>$null
+    $result = if ($Arguments[0] -eq 'devices') { & adb @Arguments 2>$null } else { & adb -s $svaDevice @Arguments 2>$null }
     if ($LASTEXITCODE -ne 0) { throw 'ADB 只读命令失败，未输出原始数据。' }
     return $result
 }
@@ -16,6 +17,7 @@ if ($online -ne 1) {
     [pscustomobject]@{状态='未验证：需要唯一已授权在线设备'; 在线数量=$online; AudioHardening='未采集'; 已修改系统设置=$false} | ConvertTo-Json
     exit 0
 }
+$svaDevice = ((@($devices | Where-Object { $_ -match '\sdevice$' }))[0] -split '\s+')[0]
 $api = ([string](Read-Adb @('shell','getprop','ro.build.version.sdk'))).Trim()
 if ($api -notmatch '^\d+$') { $api = '未知' }
 $details = (Read-Adb @('shell','dumpsys','package',$package)) -join "`n"
@@ -25,17 +27,26 @@ $hardeningRecords = [Collections.Generic.List[object]]::new()
 foreach ($source in @('dumpsys','logcat')) {
     $lines = if ($source -eq 'dumpsys') { Read-Adb @('shell','dumpsys','audio') } else { Read-Adb @('logcat','-d','-v','epoch') }
     foreach ($line in $lines) {
+        # 本应用诊断文字也会提到 AudioHardening，不能把它当成系统拦截证据。
+        if ($line -match '\bSVA_STAGE0\b' -or $line -match '"schema"\s*:\s*1\s*,\s*"package"') { continue }
         if ($line -notmatch 'AudioHardening' -or $line -notmatch $packagePattern) { continue }
         $stamp = [regex]::Match($line, '^\s*(\d{9,}\.\d+)')
         $epoch = if ($stamp.Success) { [long]([double]::Parse($stamp.Groups[1].Value,[Globalization.CultureInfo]::InvariantCulture) * 1000) } else { 0L }
         if ($source -eq 'logcat' -and $SinceEpochMillis -gt 0 -and $epoch -lt $SinceEpochMillis) { continue }
         $level = [regex]::Match($line, 'level:\s*(full|partial)')
         $category = if ($line -match '(?i)focus') { '焦点' } elseif ($line -match '(?i)play|track|write') { '播放' } else { '未知' }
+        $localTime = [regex]::Match($line, '\b\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}').Value
+        $exemption = [regex]::Match($line, 'exemption:\s*(\d+)')
+        $vendorBlocked = [regex]::Match($line, 'vivoblocked:\s*(true|false)')
         # 只输出白名单字段；不回显原行、UID、蓝牙地址、号码或其他应用信息。
         $hardeningRecords.Add([pscustomobject]@{
             来源=$source; 本应用匹配=$true; 记录毫秒=$epoch
             等级=$(if($level.Success){$level.Groups[1].Value}else{'未知'})
             API类别=$category; 与本轮时间关联=$(if($epoch -gt 0){'可结合事件开始毫秒核对'}else{'未知，可能是历史记录'})
+            设备本地时间=$(if($localTime){$localTime}else{'未知'})
+            日志措辞=$(if($line -match '\bwould\b'){'would：是否实际执行须核对API和听感'}else{'未识别为would，仍需核对上下文'})
+            exemption=$(if($exemption.Success){$exemption.Groups[1].Value}else{'未知'})
+            vivoBlocked标记=$(if($vendorBlocked.Success){$vendorBlocked.Groups[1].Value}else{'未知'})
         })
     }
 }

@@ -117,16 +117,19 @@ class SpeechSession(
                         val voices = try { engine.voices } catch (_: Exception) {
                             end("严格 Voice 枚举异常，中文能力未知；请运行手动兼容性测试"); return@post
                         }
-                        val voice = voices?.firstOrNull {
-                            it.locale.language == "zh" && it.locale.country == "CN" && !it.isNetworkConnectionRequired &&
-                                "notInstalled" !in it.features.orEmpty()
-                        }
+                        val candidates = voices?.filter {
+                            OfflineVoicePolicy.accepts(it.locale, it.isNetworkConnectionRequired,
+                                it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED))
+                        }?.sortedBy { it.name }?.sortedBy { if (it.locale.country == "CN") 0 else 1 }
+                        val voice = candidates?.firstOrNull()
                         log("getVoices数量=${voices?.size ?: "未知"}；严格离线候选=${voice != null}")
+                        log("严格候选数量=${candidates?.size ?: "未知"}；允许简体脚本 Hans；未知网络/安装状态仍拒绝")
                         if (voice == null) {
                             end("严格筛选未找到可确认的离线中文 Voice；中文能力未知，请运行手动兼容性测试"); return@post
                         }
                         val voiceResult = engine.setVoice(voice)
                         log("setVoice=$voiceResult")
+                        log("严格选中 Locale=${voice.locale.toLanguageTag()}；需要网络=${voice.isNetworkConnectionRequired}；notInstalled=${voice.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)}")
                         if (voiceResult != TextToSpeech.SUCCESS) {
                             end("严格 TTS 设置 Voice 失败，返回值=$voiceResult"); return@post
                         }

@@ -7,6 +7,7 @@ import com.mxy1021.smsvoiceassistant.audio.SpeechSession
 import com.mxy1021.smsvoiceassistant.audio.DiagnosticTimeline
 import com.mxy1021.smsvoiceassistant.audio.ForegroundFocusTest
 import com.mxy1021.smsvoiceassistant.audio.AudioModeResult
+import com.mxy1021.smsvoiceassistant.audio.Stage0Log
 import com.mxy1021.smsvoiceassistant.sms.SmsDiagnosticEvent
 import android.os.Build
 import org.json.JSONArray
@@ -20,7 +21,7 @@ class ProbeApplication : Application() {
     var session: SpeechSession? = null
     var compatibilityTestActive = false
     var foregroundFocus: ForegroundFocusTest? = null
-    val timeline = DiagnosticTimeline()
+    val timeline = DiagnosticTimeline(sink = { Stage0Log.state("timeline", "step", it) })
     val audioModeResults = MutableStateFlow<Map<Int, AudioModeResult>>(emptyMap())
     private var audioSequence = 0
     val smsEvents by lazy {
@@ -60,6 +61,7 @@ class ProbeApplication : Application() {
                 "后台限制" to "未验证，不能由 API 37 或无声直接推断")
         smsEvents.value = (smsEvents.value + SmsDiagnosticEvent(id, fields)).takeLast(8)
         saveSmsEvents()
+        Stage0Log.state("sms", "SMS_RECEIVED", "已触发；APP前台=$visible；API=${Build.VERSION.SDK_INT}", id)
         timeline.add("[$id] SMS_RECEIVED 已触发，APP前台=$visible，API=${Build.VERSION.SDK_INT}")
         return id
     }
@@ -67,6 +69,7 @@ class ProbeApplication : Application() {
         if (id == null) return
         smsEvents.value = smsEvents.value.map { if (it.id == id) it.copy(fields = it.fields + (field to value)) else it }
         saveSmsEvents()
+        Stage0Log.state("sms", field, value, id)
         timeline.add("[$id] $field=$value")
     }
     fun finishSmsEvent(id: String) {
@@ -84,6 +87,7 @@ class ProbeApplication : Application() {
         audioModeResults.value = audioModeResults.value + (selectedMode to record)
         timeline.add("[$id] A/B 直接播放；gain=$selectedMode，前台=$visible；语音与音乐分别记录")
         fun update(field: String, value: String) {
+            Stage0Log.state("audio", field, value, id)
             val current = audioModeResults.value[selectedMode] ?: return
             if (current.id == id) audioModeResults.value = audioModeResults.value +
                 (selectedMode to current.copy(fields = current.fields + (field to value)))
@@ -155,6 +159,7 @@ class ProbeApplication : Application() {
 
     /** 只接受开发者固定状态码；禁止传入短信、设备标识或异常正文。 */
     fun event(code: String, background: Boolean = false) {
+        Stage0Log.state("event", "状态", code)
         val value = "${System.currentTimeMillis()}：$code"
         events.value = value
         prefs.edit().putString("lastEvent", value).apply()
