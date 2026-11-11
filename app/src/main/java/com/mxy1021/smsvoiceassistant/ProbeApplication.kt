@@ -20,8 +20,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import com.mxy1021.smsvoiceassistant.settings.SettingsRepository
 import com.mxy1021.smsvoiceassistant.settings.PreferenceSettingsStore
 import android.provider.Settings
+import com.mxy1021.smsvoiceassistant.sms.SmsSource
+import com.mxy1021.smsvoiceassistant.sms.SmsCoordinator
+import com.mxy1021.smsvoiceassistant.audio.SpeechResult
 
 class ProbeApplication : Application() {
+    val smsCoordinator by lazy { SmsCoordinator(this) }
+    private var simulationSequence = 0L
     val smsReplayGuard = com.mxy1021.smsvoiceassistant.sms.SmsReplayGuard()
     val settings by lazy { SettingsRepository(PreferenceSettingsStore(prefs),
         Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)) }
@@ -86,25 +91,28 @@ class ProbeApplication : Application() {
         }
         prefs.edit().putString("smsEvents", data.toString()).apply()
     }
-    fun beginSmsEvent(receiveElapsed: Long = SystemClock.elapsedRealtime()): String {
-        val sequence = prefs.getLong("smsSequence", 0) + 1
-        prefs.edit().putLong("smsSequence", sequence).apply()
-        val id = "SMS-${sequence.toString().padStart(6, '0')}"
+    fun beginSmsEvent(receiveElapsed: Long = SystemClock.elapsedRealtime(), source: SmsSource = SmsSource.REAL_SMS): String {
+        val real = source == SmsSource.REAL_SMS
+        val sequence = if (real) prefs.getLong("smsSequence", 0) + 1 else ++simulationSequence
+        if (real) prefs.edit().putLong("smsSequence", sequence).apply()
+        val id = "${if (real) "SMS" else "SIM-${Stage0Log.processRun}"}-${sequence.toString().padStart(6, '0')}"
         smsReceiveElapsed[id] = receiveElapsed
         while (smsReceiveElapsed.size > 16) smsReceiveElapsed.remove(smsReceiveElapsed.keys.first())
         val fields = listOf("解析", "模板", "验证码格式", "目标耳机连接", "预期路由", "实际路由", "requestAudioFocus", "onStart", "onDone", "onError")
             .associateWith { "未执行/未观测" } + mapOf(
-                "SMS_RECEIVED" to "已触发", "APP前台" to visible.toString(),
+                "source" to source.name,
+                "SMS_RECEIVED" to if (real) "已触发" else "未触发（解析后业务注入）", "APP前台" to visible.toString(),
                 "系统API" to Build.VERSION.SDK_INT.toString(), "targetSdk" to applicationInfo.targetSdkVersion.toString(),
                 "开始毫秒" to System.currentTimeMillis().toString(), "gain" to "3",
                 "speak调用" to "未调用（短信仍为严格文件合成/PCM路径）",
-                "最终失败节点" to "未终结", "最终结果" to "处理中", "接收器finish" to "等待",
+                "最终失败节点" to "未终结", "最终结果" to "处理中", "接收器finish" to if (real) "等待" else "不适用（无广播PendingResult）",
                 "后台限制" to "未验证，不能由 API 37 或无声直接推断")
         smsEvents.value = (smsEvents.value + SmsDiagnosticEvent(id, fields)).takeLast(8)
         saveSmsEvents()
-        Stage0Log.state("sms", "SMS_RECEIVED", "已触发；APP前台=$visible；API=${Build.VERSION.SDK_INT}", id)
-        timeline.add("[$id] SMS_RECEIVED 已触发，APP前台=$visible，API=${Build.VERSION.SDK_INT}")
-        smsTime(id, "BroadcastReceiver.onReceive", receiveElapsed)
+        Stage0Log.state("sms", "source", source.name, id)
+        Stage0Log.state("sms", if (real) "SMS_RECEIVED" else "parsedMessage", if (real) "已触发" else "DEBUG_SIMULATION，不是系统短信", id)
+        timeline.add("[$id] source=${source.name}，APP前台=$visible，API=${Build.VERSION.SDK_INT}")
+        smsTime(id, if (real) "BroadcastReceiver.onReceive" else "解析后业务入口", receiveElapsed)
         environment(id, "onReceive状态")
         return id
     }
@@ -210,9 +218,10 @@ class ProbeApplication : Application() {
         if (background) prefs.edit().putString("lastBackground", value).apply()
     }
 
-    fun speak(text: String, background: Boolean, finished: () -> Unit = {}, fromSms: Boolean = false, smsEventId: String? = null) {
+    fun speak(text: String, background: Boolean, finished: () -> Unit = {}, fromSms: Boolean = false, smsEventId: String? = null,
+        result: (SpeechResult) -> Unit = {}) {
         if (session == null && foregroundFocus == null && !compatibilityTestActive && !fromSms) timeline.reset()
-        timeline.add("进入${if (fromSms) "真实短信严格链路" else "离线中文 / 焦点测试按钮"}；gain=3，后台=$background")
+        timeline.add("进入${if (fromSms) "短信业务严格链路" else "离线中文 / 焦点测试按钮"}；gain=3，后台=$background")
         if (compatibilityTestActive || foregroundFocus != null || session != null) {
             timeline.add("播放前置条件=false：另一测试正在运行；最终失败阶段=启动门禁")
             if (fromSms) {
@@ -220,15 +229,17 @@ class ProbeApplication : Application() {
                 updateSmsEvent(smsEventId, "最终失败节点", "播放前置条件：另一测试忙碌")
                 updateSmsEvent(smsEventId, "最终结果", "拒绝播放，未调用 speak")
             }
-            event("忙碌，本次拒绝播报", background); finished(); return
+            event("忙碌，本次拒绝播报", background)
+            result(SpeechResult(false, true, "忙碌，本次拒绝播报", "启动门禁", busy = true)); finished(); return
         }
         if (fromSms && !settings.snapshot().announcingEnabled) {
-            smsFinished(); finished(); return
+            smsFinished(); result(SpeechResult(false, true, "已暂停", "运行门禁")); finished(); return
         }
-        val next = SpeechSession(this, background, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, fromSms, smsEventId) {
+        val next = SpeechSession(this, background, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, fromSms, smsEventId) { outcome ->
             session = null
             speaking.value = false
             if (fromSms) smsFinished()
+            result(outcome)
             finished()
         }
         session = next

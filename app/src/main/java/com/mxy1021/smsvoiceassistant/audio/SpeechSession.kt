@@ -24,7 +24,7 @@ class SpeechSession(
     private val focusMode: Int,
     private val fromSms: Boolean,
     private val smsEventId: String? = null,
-    private val finished: () -> Unit
+    private val finished: (SpeechResult) -> Unit
 ) {
     val isSms get() = fromSms
     private val main = app.main
@@ -56,6 +56,12 @@ class SpeechSession(
     private var synthesisRequested = false
     private var focusGranted = false
     private val focusGate = SpeechFocusGate()
+    private val writtenBytes = java.util.concurrent.atomic.AtomicInteger()
+    val bytesWritten get() = writtenBytes.get()
+    val hasAudioFocus get() = focusGate.held
+    private val focusChanges = mutableListOf<Int>()
+    private var pcmDuration: Long? = null
+    private var routeConfirmed = false
     private var expectedFrames = 0L
     private var onFocusReady: (() -> Unit)? = null
     @Volatile private var pcmOverflow = false
@@ -250,6 +256,7 @@ class SpeechSession(
     private fun focusChanged(change: Int) {
         if (ended) return
         log("onAudioFocusChange=$change")
+        focusChanges.add(change)
         record("onAudioFocusChange", change)
         when (focusGate.change(change)) {
             SpeechFocusAction.STOP -> end("永久丢失音频焦点，取消播报")
@@ -290,6 +297,7 @@ class SpeechSession(
             data.fill(0); end("引擎未返回支持的 PCM，拒绝播报"); return
         }
         val duration = PcmBudget.durationMs(data.size, rate, channels)
+        pcmDuration = duration
         val elapsed = SystemClock.elapsedRealtime() - startElapsed
         if (duration == null || !PcmBudget.fits(duration, elapsed)) {
             data.fill(0); end("完整音频超过5秒或剩余8秒预算不足，整条未播报"); return
@@ -345,6 +353,7 @@ class SpeechSession(
             log("静音轨道实际路由匹配=$matched；未匹配前不写入语音 PCM")
             record("实际路由", matched)
             if (!matched) { data.fill(0); end("实际播放路由无法确认，拒绝播报"); return }
+            routeConfirmed = true
             if (!PcmBudget.fits(duration, SystemClock.elapsedRealtime() - startElapsed)) {
                 data.fill(0); end("路由检查后完整音频预算不足，整条未播报"); return
             }
@@ -388,6 +397,7 @@ class SpeechSession(
                             main.post { mark("音频实际写入", writtenAt) }
                         }
                         offset += count
+                        writtenBytes.addAndGet(count)
                     }
                     if (!ended && offset == data.size) {
                         val writtenAt = SystemClock.elapsedRealtime()
@@ -453,6 +463,7 @@ class SpeechSession(
             sms("后台", "后台处理未完成，最后阶段=$stage；可能是代码/引擎/系统限制，原因未确认")
         if (fromSms && background && playbackDone) sms("后台", "本次后台完成回调已到达；真实听验仍须记录")
         app.event(if (focusReleased) code else "焦点释放失败或状态未确认，本次失败", background)
-        finished()
+        finished(SpeechResult(playbackDone, focusReleased, code, stage, pcmDuration,
+            bytesWritten, routeConfirmed, focusChanges.toList()))
     }
 }

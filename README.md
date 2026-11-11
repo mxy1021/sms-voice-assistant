@@ -1,6 +1,6 @@
 # SMS Voice Assistant
 
-个人自用的本地 Android 短信语音助手。阶段1代码已实现并增量部署到目标机，**真实SMS测试发现临时音频焦点中断故障，修复版正在复测，阶段1尚未通过**；长全文受现有无 Service 架构限制。详见[阶段1报告](docs/stage1-report.md)与[逐项测试结果](docs/stage1-test-plan.md)。不进入阶段2。
+个人自用的本地 Android 短信语音助手。阶段1代码已部署，已补充Debug业务模拟、短样例听感和真实系统临时焦点竞争验证；**真实SMS通知故障复测及后台验收仍待完成，阶段1尚未通过**。长全文受现有无 Service 架构限制，原验收范围尚未缩小。详见[阶段1报告](docs/stage1-report.md)与[剩余验收表](docs/stage1-remaining-acceptance.md)。不进入阶段2。
 
 ## 使用
 
@@ -43,11 +43,27 @@ python scripts/Test-Stage1Device.py --ui-smoke
 
 APK：`app/build/outputs/apk/debug/app-debug.apk`，不提交仓库。设备脚本需要ADB在PATH、唯一在线授权目标机、已安装Debug版本；UI检查需解锁且手机空闲。它会短暂切换筛选并恢复，不发SMS、不授权、不清数据、不重启。详细参数、真实短信/重启/断USB步骤见测试计划。
 
-44项主机单元测试通过，0失败；Lint0错误、14警告。总开关初始真实SMS启用/停止、设备安装、UI、三次重启状态与固定耳机测试有独立证据；规则切换后的临时焦点故障已修复代码，等待真实SMS复测，Home/锁屏回归和物理断USB结果仍待确认，不能由自动化替代。
+51项主机单元测试通过，0失败；Lint0错误、16警告（新增两条为测试依赖版本提示）。总开关初始真实SMS、旧UI/重启状态证据保留；本轮短模拟三行为用户确认完整耳机有声，实际系统焦点-3/GAIN、停止/超时不复活均有断言。真实SMS通知、Home/锁屏及物理断USB结果仍待确认。
+
+Debug开发测试只使用固定人工fixture，通过独立instrumentation APK接入解析后共享业务层，不模拟系统SMS_RECEIVED：
+
+```powershell
+.\gradlew.bat :app:assembleDebugAndroidTest :app:assembleRelease
+# 首次需正常安装测试APK；完整准备步骤见下方工具文档。
+.\scripts\Test-DebugSms.ps1 -Case Otp
+.\scripts\Test-DebugSms.ps1 -Case Normal
+.\scripts\Test-DebugSms.ps1 -Case Long
+.\scripts\Test-DebugSms.ps1 -Case All
+python scripts/Verify-DebugSmsIsolation.py
+```
+
+四种一键命令已在目标机执行。All中超预算的原文和混合码会标UNSUPPORTED，完成回调仍标MANUAL_REQUIRED，不自动授予阶段1通过。测试入口、fixture及协议只在测试APK；Release无测试组件。
 
 ## 文档
 
 - [阶段1需求与边界](docs/stage1-requirements.md)
 - [阶段1用例、人工步骤及实际结果](docs/stage1-test-plan.md)
 - [阶段1实现与交付报告](docs/stage1-report.md)
+- [Debug模拟工具、命令及D01～D14实际结果](docs/debug-sms-testing.md)
+- [原45项剩余验收与全文A/B决策](docs/stage1-remaining-acceptance.md)
 - [阶段0历史报告](docs/stage0-report.md)、[阶段0历史测试计划](docs/stage0-test-plan.md)：原文保留，其已测结果不自动算作阶段1回归通过。

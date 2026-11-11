@@ -4,7 +4,7 @@
 
 ## 1. 当前结论与完成范围
 
-**阶段1尚未正式验收通过：真实SMS测试发现临时焦点中断故障，修复版正在复测。** 用户已确认总开关初始启用可播报、关闭不播报，固定测试耳机语音和音乐降低/恢复；完成三次真实重启。切换规则后用户报告只听短信提示音，不能继续使用此前“未发现新失败”的结论。其余未反馈项目保持未验证，不进入阶段2。
+**阶段1尚未正式验收通过。** 本次补充已验证短模拟业务和真实Android临时焦点竞争，用户确认三种短模拟样例完整耳机有声；真实SMS通知故障、后台与断USB仍待复核，完整全文要求仍部分完成。此前总开关、固定测试、三次重启和真实SMS失声历史保留下文；本轮新证据见第12节，不将模拟当作系统收信。
 
 最终人工状态：用户确认修复版安装后正在复测，随后明确选择“仍在测试，先交付待验收版本”。因此本轮交付到此收尾，三个规则场景的修复后听感、后台及断USB结果均等待后续反馈，不延时推定通过。
 
@@ -99,7 +99,7 @@ SettingsRepository封装同一个stage0 SharedPreferences，旧target原位保�
 - 观察到固定测试PCM全部写入、播放完成及焦点释放回调；用户明确确认“指定耳机完整有声，音乐降低并恢复”。该结果不包含真实SMS或本轮断网听验。
 - 用户已开始真实SMS/断USB人工验收，尚未反馈的项目仍未验证。没有模拟SMS，不能用按钮回调替代。
 
-最终焦点修复APK：app/build/outputs/apk/debug/app-debug.apk；24,245,331字节；SHA-256 `cfe54f9e5516a8c644b4f277c5f71a8c62d660a2f2538a6e53c616de19e00599`，保留数据更新Success。本地构建证据在app/build，不上传APK、UI原图、配置或原始日志。此前五批部署结果与本次修复复测分开记录。
+此前阶段1焦点修复APK（模拟工具补充前）：24,245,331字节；SHA-256 `cfe54f9e5516a8c644b4f277c5f71a8c62d660a2f2538a6e53c616de19e00599`，保留数据更新Success。本地构建证据在app/build，不上传APK、UI原图、配置或原始日志。此前五批与本轮模拟工具构建分别记录。
 
 ## 8. 阶段0回归状态
 
@@ -124,7 +124,7 @@ docs/stage0-report.md和stage0-test-plan.md与基线无差异，历史验收没�
 
 Debug/Release合并权限均恰为RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT_COMPLETED；Service数0，Release无诊断Activity。未新增应用依赖或网络权限。静态审查：实际PCM仍严格目标路由、MAY_DUCK、结束释放；没有全局音量/播放器控制或正文落盘。测试覆盖配置升级/重建、规则依赖、许可竞态、识别/格式化、多数字负例、多段身份/时间、防重、全文/PCM预算及状态映射。没有故障注入便不授予TTS/焦点失败的真机通过。
 
-## 10. Git交付
+## 10. 原阶段1Git交付（模拟工具补充前）
 
 五批代码提交见上表，后续焦点修复代码提交为fa395c2；文档提交包含需求、T/R/L逐项清单、实际报告及README。已普通推送origin/main；焦点修复推送后本地与远程完整SHA均为fa395c26e6fdc3941be991cb937174ebcd0d2887，工作区干净。本次收尾文档提交的最终SHA由交付消息和Git记录给出，避免文档自引用。推送前检查diff、忽略规则与敏感字段；不提交APK/构建/截图/原始日志/设备身份/密钥。保留阶段0历史与现有用户配置。
 
@@ -133,3 +133,41 @@ Debug/Release合并权限均恰为RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT
 T01～T15、R01～R20、L01～L10的实际状态见[完整测试清单](stage1-test-plan.md)。当前无法宣布阶段1全范围完成：长全文部分实现；已发现规则切换测试中的临时焦点中断故障，修复版待真实复测。初始总开关启用/停止由用户确认；真实SMS三种规则、播放中停止/竞争、Home/锁屏、动态断连、权限撤销、后台静置及断USB结果仍待确认。保留已知失败；未测试的项目不判通过或失败。
 
 补齐必要人工验收并处理真实回归后再判断是否通过；本任务不进入阶段2。
+
+## 12. Debug模拟工具补充与验收准备（2026-11-11）
+
+本轮基线与远程均核对为92e477e3997c08ab097d36b499b8f472d66fb877，开始时工作区干净；阶段0历史文件未改。使用AndroidX instrumentation，仅在androidTest中保存固定fixture与入口。SmsReceiver保留原Manifest及BROADCAST_SMS属性，只由真实系统广播解析PDU；解析后与模拟输入共同调用SmsCoordinator。共享层同样检查运行、权限、片段/有效期、规则、防重，再进入原SpeechSession。PCM内部仅增加只读终结遥测，原合成、路由、焦点、写入和清理策略未重构。
+
+### 构建与安装
+
+最终完整命令包括assembleDebug、testDebugUnitTest、lintDebug、assembleDebugAndroidTest、assembleRelease，BUILD SUCCESSFUL（11秒）；51项单元测试，0失败/错误/跳过；Lint0错误、16警告，新两条为测试依赖版本提示。测试依赖只在androidTestImplementation，未升级原应用依赖/SDK、修改包名或签名。
+
+目标vivo V2405A，实读Android17/API37；Debug与测试APK均install -r成功，测试APK额外-t允许testOnly安装，不加-g。首次内部startActivitySync超时的工具故障已通过就绪握手、ADB正常打开已有正式Activity解决；没有新增导出注入入口或放开后台安全限制。所有测试是前台instrumentation，不是Home/锁屏系统收信测试。
+
+最终Debug APK 24,220,307字节，SHA256 `5522d979ee9d1645351676d800872138642aa5af0157ab6599e3d7bb3097e11b`；测试APK 864,602字节，SHA256 `62f38cadecc0761560a39780f4740b84ebb80e0bcc05a38f2dd656eecece4636`。Release unsigned APK构建成功，仅作隔离检查，未替换签名或安装到手机。
+
+### 实际设备证据
+
+Otp、Normal、Long、All四种命令实际执行并返回0。最终All每次1个JUnit入口、22条业务子结果：PASS8、MANUAL_REQUIRED8、UNSUPPORTED5、SKIP1、FAIL0。D12在All时因目标仍连接而SKIP，用户随后实际断开耳机，单独Disconnected命令PASS，PCM写入0；之后用户重连。不能把命令退出0解释成全部D用例已可完整播报。
+
+完整[D01～D14结果表](debug-sms-testing.md)记录具体PCM时长及各子结果。用户明确确认三种短模拟样例（精简验证码、短验证码全文、短普通全文）均完整从指定耳机听到。这不包含本轮音乐听感、专项焦点恢复听感、后台或真实SMS。
+
+D13由实际AudioManager竞争请求产生系统-3和GAIN回调，记录[-3,1]；断言暂停期间PCM写入不增长、恢复时实际路由仍匹配、完成后焦点释放。另两组实际临时抢占期间停止/原8秒超时，释放竞争者后不复活，最终超时elapsed约8008ms。没有手动调用焦点回调冒充系统事件。永久丢失-1及晚到回调仍只有单元测试证据；真实SMS通知音的原故障仍需少量真实SMS复核。
+
+D02原文7.707秒、D04全文7.787秒、D05混合码精简语音8.227秒、D07的80代码单元17.227秒、D09的合法长度原文8.107秒，均整条拒绝、语音写入0；D08的81代码单元在TTS前拒绝。这些安全断言通过不代表全文/混合码完整播报通过。80代码单元上限也不是可播成功长度保证。
+
+D10三个解析后输入，一条播放、两条BUSY，所有终结及焦点释放断言通过；D14只证明两个虚拟片段的业务组合，不证明运营商PDU排序、重组或广播投递。当前未对native资源泄漏作独立量测，不用会话清空替代全部资源故障注入。
+
+### 隔离、隐私和配置
+
+实际Debug/Release合并Manifest权限恰为RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT_COMPLETED，Service数0、目标APK instrumentation数0，真实SmsReceiver仍导出且要求BROADCAST_SMS、action仅SMS_RECEIVED。测试APK移除了AndroidX三个导出占位Activity与REORDER_TASKS；无Activity/Receiver/Service/Provider、无uses-permission，唯一入口是测试instrumentation注册。
+
+scripts/Verify-DebugSmsIsolation.py检查上述实际Manifest与三份APK DEX：入口类、fixture、就绪/结果协议及虚拟正文只在测试APK，Release和目标Debug APK均未包含；来源枚举在main仅作诊断标签，不是组件或安全特权。Release不含历史诊断Activity。未新增网络/历史短信权限、联网代码、Service或后台轮询。
+
+模拟记录source=DEBUG_SIMULATION、独立SIM编号、SMS_RECEIVED未触发、无PendingResult.finish；真实路径source=REAL_SMS。所有原始本地输出都在被忽略的app/build，未收集真实正文/号码。最终四个配置值和目标耳机指纹与本轮安装前一致，私有配置未发现fixture正文或格式化虚拟验证码文本；不持久化虚拟正文、验证码或PCM。
+
+### 剩余验收与范围决策
+
+[45项剩余验收表](stage1-remaining-acceptance.md)逐项列出编号、名称、当前状态、模拟/真实SMS要求、断USB、听感、阻塞、证据和下一步。优先补原真实SMS通知故障的三种短行为，再做动态断连/路由、断USB的Home/锁屏/静置/音乐、重启未打开APP前真实收信、冷进程与真实多段。
+
+原需求是所有新普通SMS全文播报，当前实现仍部分完成。候选A为继续保持原要求并解决超限，候选B为用户明确接受阶段1有限全文、任意长度另立后续任务；用户尚未决定，不自动采用B。本轮只补模拟能力与证据，不宣布阶段1通过，也不进入阶段2。最终Git提交和普通推送后的本地/远程SHA由交付消息提供。
