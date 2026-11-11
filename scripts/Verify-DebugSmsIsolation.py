@@ -9,6 +9,7 @@ ANDROID = "{http://schemas.android.com/apk/res/android}"
 EXPECTED = {"android.permission." + name for name in ("RECEIVE_SMS", "BLUETOOTH_CONNECT", "RECEIVE_BOOT_COMPLETED")}
 MARKERS = (b"DebugSmsInjectionTest", b"DebugSmsFixtures", b"SVA_DEBUG_RESULT", b"SVA_DEBUG_READY",
            "【测试平台】验证码：".encode("utf-8"), "这是一条用于检查完整语音播放时间上限".encode("utf-8"))
+FAULT_MARKERS = (b"ControlledSpeechDependencies", b"ObservedFailureTts", b"ControlledFailure")
 
 
 def manifest(path):
@@ -41,6 +42,7 @@ def main():
         assert [n.get(ANDROID + "name") for n in receiver.findall("intent-filter/action")] == ["android.provider.Telephony.SMS_RECEIVED"]
         data = dex(apk(variant))
         assert all(marker not in data for marker in MARKERS), f"Test code leaked into {variant}"
+        assert all(marker not in data for marker in FAULT_MARKERS), f"Failure substitutes leaked into {variant}"
         if variant == "release":
             assert not any("Stage0DiagnosticsActivity" in name for name in components)
     test = manifest("app/build/intermediates/packaged_manifests/debugAndroidTest/processDebugAndroidTestManifest/AndroidManifest.xml")
@@ -49,6 +51,7 @@ def main():
     assert not any(test.findall(".//" + tag) for tag in ("activity", "receiver", "service", "provider"))
     data = dex(apk("androidTest/debug"))
     assert all(marker in data for marker in MARKERS)
+    assert all(marker in data for marker in FAULT_MARKERS)
     print(json.dumps({"status": "PASS", "debugAndReleasePermissions": sorted(EXPECTED),
                       "services": 0, "appInstrumentationEntries": 0, "testApkExportedComponents": 0,
                       "testOnlyProtocolAndFixtures": True, "protectedRealSmsReceiver": True}))

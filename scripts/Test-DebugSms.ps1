@@ -6,7 +6,8 @@ Build/install instructions and evidence limits: docs/debug-sms-testing.md
 [CmdletBinding()]
 param(
     [ValidateSet('Otp','OtpFull','Normal','Numbers','Mixed','OtpAmbiguous','Long','Long80','Long81',
-        'LongPcm','Rapid','Disabled','Disconnected','Focus','Multipart','Logic','All')]
+        'LongPcm','Rapid','Disabled','Disconnected','Focus','Multipart','Logic','All','Safety','StopDuring',
+        'RulesDuring','TtsFailures','FocusFailure','FocusPermanent','BluetoothPermission','DisconnectDuring','RouteDuring')]
     [string]$Case = 'All',
     [string]$Serial
 )
@@ -46,6 +47,9 @@ function Invoke-SvaAdb([string[]]$Arguments, [int]$TimeoutSeconds = 30, [string]
             $line = $lineTask.GetAwaiter().GetResult()
             if ($null -eq $line) { break }
             [void]$output.AppendLine($line)
+            if ($line -match 'SVA_DEBUG_ACTION (DISCONNECT_DURING_SPEECH|ROUTE_DURING_SPEECH)\s*$') {
+                Write-Output "MANUAL_REQUIRED action=$($Matches[1]); fixed speech starts in 3 seconds. Only act if prepared."
+            }
             if ($ForegroundComponent -and -not $foregroundStarted -and $line.Contains('SVA_DEBUG_READY')) {
                 $foregroundStarted = $true
                 $launch = Invoke-SvaAdb -Arguments ($targetArguments + @('shell','am','start','-n',$ForegroundComponent))
@@ -99,6 +103,24 @@ try {
         if ($installed.Code -ne 0 -or $installed.Output -notmatch '(?m)^package:') {
             throw 'Debug application or test APK is not installed. See docs/debug-sms-testing.md for install -r steps.'
         }
+        $paths = @($installed.Output -split "`r?`n" | Where-Object { $_.StartsWith('package:') } | ForEach-Object { $_.Substring(8).Trim() })
+        if ($paths.Count -ne 1 -or $paths[0] -notmatch '^/[A-Za-z0-9/._~+=-]+\.apk$') {
+            throw 'Cannot verify the installed single-APK code path.'
+        }
+        $metadata = if ($package -ceq $packageName) { $appMetadata } else { $testMetadata }
+        $metadataPath = if ($package -ceq $packageName) { $appMetaPath } else { $testMetaPath }
+        if ($metadata.elements.Count -ne 1) { throw 'Expected one built APK for this variant.' }
+        $builtApk = Join-Path (Split-Path $metadataPath) $metadata.elements[0].outputFile
+        if (-not (Test-Path -LiteralPath $builtApk)) { throw 'Built APK is missing; rebuild before running instrumentation.' }
+        $localHash = (Get-FileHash -LiteralPath $builtApk -Algorithm SHA256).Hash
+        $remoteHash = Invoke-SvaAdb -Arguments ($targetArguments + @('shell','sha256sum',$paths[0]))
+        $digestMatch = [regex]::Match($remoteHash.Output, '^([A-Fa-f0-9]{64})\s')
+        if ($remoteHash.Code -ne 0 -or -not $digestMatch.Success) {
+            throw 'Cannot verify installed APK digest; no tests started.'
+        }
+        if ($localHash -ine $digestMatch.Groups[1].Value) {
+            throw 'Installed APK differs from the built target/test APK. Complete normal install -r of BOTH APKs; no tests started.'
+        }
     }
     $flags = Invoke-SvaAdb -Arguments ($targetArguments + @('shell','dumpsys','package',$packageName))
     if ($flags.Code -ne 0 -or $flags.Output -notmatch '(?m)^\s*flags=\[[^\]]*\bDEBUGGABLE\b') {
@@ -139,7 +161,7 @@ try {
             $results += $item
             # Rebuild allowed fields: never relay raw instrumentation or Logcat output.
             $safe = [ordered]@{ source=$item.source; case=$item.case; status=$item.status;
-                assertions=$item.assertions; hearing=$item.hearing; evidence=$item.evidence }
+                assertions=$item.assertions; hearing=$item.hearing; evidence=$item.evidence; mechanism=$item.mechanism }
             foreach ($field in @('event','disposition','reason','pcmMs','bytesWritten','actualRoute','focusReleased','focusChanges')) {
                 if ($item.PSObject.Properties.Name -contains $field) { $safe[$field] = $item.$field }
             }

@@ -24,6 +24,7 @@ class SpeechSession(
     private val focusMode: Int,
     private val fromSms: Boolean,
     private val smsEventId: String? = null,
+    private val dependencies: SpeechDependencies = PlatformSpeechDependencies,
     private val finished: (SpeechResult) -> Unit
 ) {
     val isSms get() = fromSms
@@ -143,7 +144,7 @@ class SpeechSession(
         stage = "TTS 初始化"
         log("开始初始化 TTS（默认引擎）")
         app.event("TTS 初始化中", background)
-        tts = TextToSpeech(app) { status ->
+        tts = dependencies.createTts(app) { status ->
             val arrived = SystemClock.elapsedRealtime()
             main.post {
                 mark("TTS初始化回调到达", arrived)
@@ -313,7 +314,7 @@ class SpeechSession(
         if (!alive("申请音频焦点")) { data.fill(0); return }
         mark("requestAudioFocus开始")
         app.environment(smsEventId, "申请焦点状态")
-        val focusResult = audio.requestAudioFocus(focus!!)
+        val focusResult = dependencies.requestFocus(audio, focus!!)
         mark("requestAudioFocus完成")
         record("焦点申请时APP前台", app.visible)
         record("requestAudioFocus", focusResult)
@@ -440,7 +441,7 @@ class SpeechSession(
         val focusReleased = focus?.let {
             mark("焦点释放开始")
             log("调用 abandonAudioFocusRequest：合成onDone前=${!synthesisDone}，实际播放完成前=${!playbackDone}；原因=$code")
-            runCatching { audio.abandonAudioFocusRequest(it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }.getOrDefault(false).also { mark("焦点释放完成") }
+            runCatching { dependencies.abandonFocus(audio, it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }.getOrDefault(false).also { mark("焦点释放完成") }
         } ?: true
         log(if (focus == null) "未申请焦点，未调用 abandonAudioFocusRequest" else "焦点释放成功=$focusReleased")
         if (tts != null) {

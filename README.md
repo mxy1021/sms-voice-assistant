@@ -1,6 +1,6 @@
 # SMS Voice Assistant
 
-个人自用的本地 Android 短信语音助手。阶段1代码已部署，已补充Debug业务模拟、短样例听感和真实系统临时焦点竞争验证；**真实SMS通知故障复测及后台验收仍待完成，阶段1尚未通过**。用户已正式接受方案B：阶段1为有限长度全文MVP；较长/任意长度全文留待后续独立专项。此范围决定不代表阶段1测试通过。详见[阶段1报告](docs/stage1-report.md)与[剩余验收表](docs/stage1-remaining-acceptance.md)。不进入阶段2。
+个人自用的本地 Android 短信语音助手。阶段1既有版本已部署；本轮安全补测版本已构建，设备更新被安装器中止，尚未部署。已补充Debug业务模拟、短样例听感和真实系统临时焦点竞争验证；**真实SMS通知故障复测及后台验收仍待完成，阶段1尚未通过**。用户已正式接受方案B：阶段1为有限长度全文MVP；较长/任意长度全文留待后续独立专项。此范围决定不代表阶段1测试通过。详见[阶段1报告](docs/stage1-report.md)与[剩余验收表](docs/stage1-remaining-acceptance.md)。不进入阶段2。
 
 ## 使用
 
@@ -66,4 +66,7 @@ python scripts/Verify-DebugSmsIsolation.py
 - [阶段1实现与交付报告](docs/stage1-report.md)
 - [Debug模拟工具、命令及D01～D14实际结果](docs/debug-sms-testing.md)
 - [方案B与45项剩余验收](docs/stage1-remaining-acceptance.md)
+- [最终验收操作单：安全测试及七条真实SMS](docs/stage1-final-acceptance.md)
 - [阶段0历史报告](docs/stage0-report.md)、[阶段0历史测试计划](docs/stage0-test-plan.md)：原文保留，其已测结果不自动算作阶段1回归通过。
+
+当前新增Safety/故障/动态用例尚未真机执行；需正常安装本轮目标和测试APK后再运行。脚本会校验已安装APK与构建SHA，拒绝使用旧构建冒充新用例。方案B已接受，阶段1仍待安全、真实收信及断USB验收。

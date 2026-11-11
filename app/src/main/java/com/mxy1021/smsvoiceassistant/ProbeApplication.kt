@@ -23,6 +23,8 @@ import android.provider.Settings
 import com.mxy1021.smsvoiceassistant.sms.SmsSource
 import com.mxy1021.smsvoiceassistant.sms.SmsCoordinator
 import com.mxy1021.smsvoiceassistant.audio.SpeechResult
+import com.mxy1021.smsvoiceassistant.audio.SpeechDependencies
+import com.mxy1021.smsvoiceassistant.audio.PlatformSpeechDependencies
 
 class ProbeApplication : Application() {
     val smsCoordinator by lazy { SmsCoordinator(this) }
@@ -219,7 +221,7 @@ class ProbeApplication : Application() {
     }
 
     fun speak(text: String, background: Boolean, finished: () -> Unit = {}, fromSms: Boolean = false, smsEventId: String? = null,
-        result: (SpeechResult) -> Unit = {}) {
+        result: (SpeechResult) -> Unit = {}, dependencies: SpeechDependencies = PlatformSpeechDependencies) {
         if (session == null && foregroundFocus == null && !compatibilityTestActive && !fromSms) timeline.reset()
         timeline.add("进入${if (fromSms) "短信业务严格链路" else "离线中文 / 焦点测试按钮"}；gain=3，后台=$background")
         if (compatibilityTestActive || foregroundFocus != null || session != null) {
@@ -235,7 +237,7 @@ class ProbeApplication : Application() {
         if (fromSms && !settings.snapshot().announcingEnabled) {
             smsFinished(); result(SpeechResult(false, true, "已暂停", "运行门禁")); finished(); return
         }
-        val next = SpeechSession(this, background, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, fromSms, smsEventId) { outcome ->
+        val next = SpeechSession(this, background, android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, fromSms, smsEventId, dependencies) { outcome ->
             session = null
             speaking.value = false
             if (fromSms) smsFinished()

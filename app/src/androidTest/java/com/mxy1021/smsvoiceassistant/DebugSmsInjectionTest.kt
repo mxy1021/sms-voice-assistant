@@ -31,12 +31,14 @@ class DebugSmsInjectionTest {
         instrumentation.runOnMainSync { value = block() }
         @Suppress("UNCHECKED_CAST") return value as T
     }
-    private fun emit(id: String, status: String, evidence: String, result: SmsResult? = null) {
+    private fun emit(id: String, status: String, evidence: String, result: SmsResult? = null,
+        mechanism: String = "PLATFORM") {
         if (status == "FAIL") failures++
         val json = JSONObject().put("schema", 1).put("source", "DEBUG_SIMULATION")
             .put("case", id).put("status", status).put("evidence", evidence)
+            .put("mechanism", mechanism)
             .put("assertions", if (status in setOf("PASS", "MANUAL_REQUIRED", "UNSUPPORTED")) "PASS" else status)
-            .put("hearing", if (result?.speech?.playbackCompleted == true) "MANUAL_REQUIRED" else "NOT_RUN")
+            .put("hearing", if (status == "MANUAL_REQUIRED" || result?.speech?.playbackCompleted == true) "MANUAL_REQUIRED" else "NOT_RUN")
         result?.let { r ->
             json.put("event", r.id).put("disposition", r.disposition.name).put("reason", r.reason)
             r.speech?.let { s -> json.put("pcmMs", s.pcmDurationMs).put("bytesWritten", s.bytesWritten)
@@ -49,12 +51,12 @@ class DebugSmsInjectionTest {
         // Normal repository setters, not an override of the coordinator's configuration.
         app.settings.setOtpOnly(true); app.settings.setSimplify(simplify); app.settings.setOtpOnly(only)
     }
-    private fun submit(text: String, parts: List<String> = listOf(text)): Submission {
+    private fun submit(text: String, parts: List<String> = listOf(text), coordinator: SmsCoordinator = app.smsCoordinator): Submission {
         val future = CompletableFuture<SmsResult>()
         val id = main {
             val wall = System.currentTimeMillis()
             val sender = "synthetic-fixture-${++sequence}"
-            app.smsCoordinator.submit(parts.map { SmsPart(sender, wall, it) }, SystemClock.elapsedRealtime(),
+            coordinator.submit(parts.map { SmsPart(sender, wall, it) }, SystemClock.elapsedRealtime(),
                 wall, SmsSource.DEBUG_SIMULATION) { future.complete(it) }
         }
         return Submission(id, future)
@@ -231,6 +233,144 @@ class DebugSmsInjectionTest {
         } finally { configure(before.otpOnlyEnabled, before.otpSimplifyEnabled) }
     }
 
+    private fun activeChange(stop: Boolean) {
+        val id = if (stop) "L01.normalStop" else "R20.ruleChange"
+        configure(true, true)
+        audioCondition()?.let { emit(id, "SKIP", it); return }
+        val saved = main { app.settings.snapshot() }
+        val job = submit(DebugSmsFixtures.SHORT_OTP)
+        try {
+            if (!waitUntil(2500) { main { (app.session?.bytesWritten ?: 0) > 0 && app.session?.hasAudioFocus == true } }) {
+                val r = await(job); emit(id, "SKIP", "NORMAL_PLAYBACK_NOT_OBSERVED", r); return
+            }
+            val changedAt = SystemClock.elapsedRealtime()
+            main {
+                if (stop) app.setAnnouncingEnabled(false)
+                else app.settings.setOtpOnly(false) // Exercise the generation gate, without calling cancel directly.
+            }
+            assertTrue("$id old playback must promptly terminate", waitUntil(1500) { job.done.isDone })
+            val r = await(job); val speech = r.speech!!
+            assertFalse(speech.playbackCompleted); assertTrue(speech.bytesWritten > 0)
+            assertTrue(speech.focusReleased); assertTrue(idle())
+            if (speech.focusChanges.isNotEmpty()) {
+                emit(id, "SKIP", "EXTERNAL_FOCUS_INTERRUPTION_CHANGED_NORMAL_PLAYBACK_CONDITION", r); return
+            }
+            main { app.setAnnouncingEnabled(saved.announcingEnabled) }
+            configure(saved.otpOnlyEnabled, saved.otpSimplifyEnabled)
+            Thread.sleep(100); assertTrue("$id restoring configuration must not revive the old session", idle())
+            assertTrue(SystemClock.elapsedRealtime() - changedAt < 2000)
+            emit(id, "PASS", "NORMAL_PCM_ACTIVE_THEN_MUTATION;TERMINATED_NO_REVIVAL;STOP_HEARING_SEPARATE", r)
+        } finally {
+            if (!job.done.isDone) { main { app.session?.cancel() }; await(job) }
+            configure(saved.otpOnlyEnabled, saved.otpSimplifyEnabled)
+            main { app.setAnnouncingEnabled(saved.announcingEnabled) }
+        }
+    }
+
+    private fun controlledFailure(failure: ControlledFailure) {
+        val id = when (failure) {
+            ControlledFailure.INIT -> "L05.init"
+            ControlledFailure.SYNTHESIS -> "L05.synthesis"
+            ControlledFailure.FOCUS_REQUEST -> "L06.denied"
+        }
+        configure(true, true)
+        audioCondition()?.let { emit(id, "SKIP", it, mechanism = "CONTROLLED_SUBSTITUTE"); return }
+        val dependencies = ControlledSpeechDependencies(failure)
+        val coordinator = SmsCoordinator(app) { text, background, eventId, result ->
+            app.speak(text, background, fromSms = true, smsEventId = eventId, result = result, dependencies = dependencies)
+        }
+        val r = await(submit(DebugSmsFixtures.SHORT_OTP, coordinator = coordinator))
+        val speech = r.speech!!
+        assertFalse(speech.playbackCompleted); assertEquals(0, speech.bytesWritten)
+        assertFalse(speech.actualRouteConfirmed); assertTrue(speech.focusReleased); assertTrue(idle())
+        assertTrue("$id TTS stop/shutdown invoked on the constructed platform object", main {
+            (dependencies.engine?.shutdownCalls ?: 0) == 1 && (dependencies.engine?.stopCalls ?: 0) >= 1
+        })
+        if (failure == ControlledFailure.FOCUS_REQUEST) {
+            assertEquals(1, dependencies.requests); assertEquals(1, dependencies.abandons)
+            assertTrue(speech.reason.contains("音频焦点申请失败"))
+        } else {
+            assertEquals(0, dependencies.requests); assertEquals(0, dependencies.abandons)
+            assertTrue(speech.reason.contains(if (failure == ControlledFailure.INIT) "初始化失败" else "合成失败"))
+        }
+        emit(id, "PASS", "CONTROLLED_FAILURE_BRANCH;ZERO_PCM;TTS_STOP_SHUTDOWN;NO_SYSTEM_ERROR_CLAIM", r,
+            mechanism = "CONTROLLED_SUBSTITUTE")
+    }
+
+    private fun permanentFocusLoss() {
+        val id = "L06.permanent"
+        configure(true, true)
+        audioCondition()?.let { emit(id, "SKIP", it, mechanism = "ANDROID_SYSTEM"); return }
+        val audio = instrumentation.context.getSystemService(AudioManager::class.java)
+        if (audio.isMusicActive) {
+            emit(id, "SKIP", "EXTERNAL_MUSIC_ACTIVE;DO_NOT_DISRUPT_USER_MUSIC", mechanism = "ANDROID_SYSTEM"); return
+        }
+        val job = submit(DebugSmsFixtures.SHORT_OTP)
+        val contender = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            .setOnAudioFocusChangeListener({ }, app.main).build()
+        var acquired = false
+        try {
+            if (!waitUntil(2500) { main { (app.session?.bytesWritten ?: 0) > 0 } }) {
+                emit(id, "SKIP", "PLAYBACK_NOT_STARTED", await(job), "ANDROID_SYSTEM"); return
+            }
+            acquired = main { audio.requestAudioFocus(contender) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }
+            if (!acquired) { emit(id, "SKIP", "COMPETITOR_FOCUS_NOT_GRANTED", await(job), "ANDROID_SYSTEM"); return }
+            val r = await(job); val speech = r.speech!!
+            if (!speech.focusChanges.contains(-1)) {
+                emit(id, "SKIP", "REAL_MINUS1_NOT_OBSERVED;NO_FAKE_CALLBACK", r, "ANDROID_SYSTEM"); return
+            }
+            assertFalse(speech.playbackCompleted); assertTrue(speech.focusReleased); assertTrue(idle())
+            main { audio.abandonAudioFocusRequest(contender) }; acquired = false
+            Thread.sleep(100); assertTrue(idle())
+            emit(id, "PASS", "ACTUAL_ANDROID_MINUS1_CANCELS_AND_DOES_NOT_REVIVE", r, "ANDROID_SYSTEM")
+        } finally {
+            if (acquired) main { audio.abandonAudioFocusRequest(contender) }
+            if (!job.done.isDone) { main { app.session?.cancel() }; await(job) }
+        }
+    }
+
+    private fun permissionRevoked() {
+        val id = "T10.bluetoothRevoked"
+        if (app.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            emit(id, "SKIP", "USER_MUST_REVOKE_BLUETOOTH_NORMALLY;HARNESS_DOES_NOT_CHANGE_PERMISSIONS"); return
+        }
+        if (!main { app.settings.snapshot().announcingEnabled }) { emit(id, "SKIP", "APP_DISABLED"); return }
+        val r = await(submit(DebugSmsFixtures.OTP))
+        assertEquals(SmsDisposition.REJECTED, r.disposition); assertNull(r.speech); assertTrue(idle())
+        assertTrue(r.reason.contains("权限缺失"))
+        emit(id, "PASS", "REAL_BLUETOOTH_PERMISSION_DENIED;NO_TTS_OR_PCM", r, "ANDROID_PERMISSION_STATE")
+    }
+
+    private fun manualRouteChange(disconnect: Boolean) {
+        val id = if (disconnect) "L02.dynamic" else "L03.dynamic"
+        configure(true, true)
+        audioCondition()?.let { emit(id, "SKIP", it); return }
+        val action = if (disconnect) "DISCONNECT_DURING_SPEECH" else "ROUTE_DURING_SPEECH"
+        val expectedSettings = main { app.settings.snapshot() }
+        instrumentation.sendStatus(2, Bundle().apply { putString("stream", "\nSVA_DEBUG_ACTION $action\n") })
+        Thread.sleep(3000) // Preparation only; the unchanged 8-second budget starts at submit below.
+        val job = submit(DebugSmsFixtures.OTP)
+        val r = await(job); val speech = r.speech!!
+        if (speech.playbackCompleted) {
+            emit(id, "SKIP", "NO_REAL_DISCONNECT_OR_ROUTE_CHANGE_OBSERVED;DO_NOT_INFER_A_CALLBACK", r); return
+        }
+        // Do not treat the writer's combined "state/permission/route" error as proof
+        // of a routing callback. Require a specific platform route/disconnect path,
+        // with permissions and user configuration still intact.
+        val specificRoutePath = speech.reason.startsWith("目标蓝牙断开") ||
+            speech.reason.startsWith("目标输出被移除") ||
+            speech.reason == "实际路由改变或权限撤销，取消播报"
+        val routeFailure = specificRoutePath && main { app.settings.snapshot() == expectedSettings } &&
+            app.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!routeFailure || speech.bytesWritten <= 0 || !speech.actualRouteConfirmed) {
+            emit(id, "SKIP", "REQUIRED_DYNAMIC_ROUTE_CONDITION_NOT_ESTABLISHED", r); return
+        }
+        assertTrue(speech.focusReleased); assertTrue(idle())
+        emit(id, "MANUAL_REQUIRED", "ACTIVE_PCM_THEN_PLATFORM_ROUTE_GUARD_CANCEL;CONFIRM_NO_SPEAKER_LEAK", r, "ANDROID_ROUTE_GUARD")
+    }
+
     @Test fun runSelectedFixtures() {
         assertTrue("Only Debug target is supported", app.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
         val original = main { app.settings.snapshot() }
@@ -240,8 +380,11 @@ class DebugSmsInjectionTest {
                 waitUntil(15_000) { main { app.visible } })
             val selected = InstrumentationRegistry.getArguments().getString("fixture", "All")
             val cases = if (selected == "All") listOf("Logic", "Otp", "OtpFull", "Normal", "Numbers", "Mixed",
-                "OtpAmbiguous", "Long80", "Long81", "LongPcm", "Rapid", "Disabled", "Disconnected", "Focus", "Multipart")
-                else if (selected == "Long") listOf("Long80", "Long81", "LongPcm") else listOf(selected)
+                "OtpAmbiguous", "Long80", "Long81", "LongPcm", "Rapid", "Disabled", "Disconnected", "Focus", "Multipart",
+                "StopDuring", "RulesDuring", "TtsFailures", "FocusFailure", "FocusPermanent")
+                else if (selected == "Long") listOf("Long80", "Long81", "LongPcm")
+                else if (selected == "Safety") listOf("StopDuring", "RulesDuring", "TtsFailures", "FocusFailure", "FocusPermanent")
+                else listOf(selected)
             cases.forEach { case ->
                 try {
                     when (case) {
@@ -273,6 +416,14 @@ class DebugSmsInjectionTest {
                         "Disabled" -> disabled()
                         "Disconnected" -> disconnected()
                         "Focus" -> { focus("resume"); focus("stop"); focus("timeout") }
+                        "StopDuring" -> activeChange(true)
+                        "RulesDuring" -> activeChange(false)
+                        "TtsFailures" -> { controlledFailure(ControlledFailure.INIT); controlledFailure(ControlledFailure.SYNTHESIS) }
+                        "FocusFailure" -> controlledFailure(ControlledFailure.FOCUS_REQUEST)
+                        "FocusPermanent" -> permanentFocusLoss()
+                        "BluetoothPermission" -> permissionRevoked()
+                        "DisconnectDuring" -> manualRouteChange(true)
+                        "RouteDuring" -> manualRouteChange(false)
                         "Multipart" -> {
                             val parts = listOf("【测试平台】验证码：429", "317，请勿泄露。")
                             assertTrue("Business assembly only", parts.joinToString("") == DebugSmsFixtures.OTP)

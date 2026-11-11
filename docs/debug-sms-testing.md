@@ -116,7 +116,7 @@ python scripts/Verify-DebugSmsIsolation.py
 
 完整45项原验收的剩余工作见[阶段1剩余验收表](stage1-remaining-acceptance.md)。本工具通过不会自动改变真实SMS、后台、断USB和完整听感的验收状态。
 
-## 本轮实际执行结果（2026-11-11）
+## 模拟工具交付轮实际执行结果（基线7bf842d，2026-11-11）
 
 目标为vivo X200 Pro / OriginOS7，实读Android17 API37。Otp、Normal、Long、All四种一键命令均在已安装设备实际执行，返回码0。每次是1个JUnit instrumentation入口，All输出22条结构化业务子结果，并非22个独立JUnit测试。最终All：PASS8、MANUAL_REQUIRED8、UNSUPPORTED5、SKIP1、FAIL0；其中D12连接条件不满足，随后由用户断开耳机单独补测PASS。没有把UNSUPPORTED或SKIP算成完整播报通过。
 
@@ -140,3 +140,13 @@ python scripts/Verify-DebugSmsIsolation.py
 用户只明确确认三种短模拟业务的耳机完整听感；没有自动扩展为真实SMS、D13专项听感、音乐恢复、动态断连或断USB成功。
 
 最终主机命令通过：51项单元测试、0失败/错误/跳过，Lint0错误/16警告；Debug、androidTest及Release均构建成功。新增两条为测试依赖版本提示。隔离脚本通过；本轮结束四项配置与目标耳机指纹均与安装前一致，私有配置中未发现fixture正文或格式化验证码文本。原始本地输出仅在被忽略的app/build/debug-sms-*.txt。
+
+## 方案B收尾新增用例（已构建，设备NOT_RUN）
+
+新增命令：Safety、StopDuring、RulesDuring、TtsFailures、FocusFailure、FocusPermanent、BluetoothPermission、DisconnectDuring、RouteDuring。Safety为6个非人工子用例；All扩展为28个业务子结果，手动动态/权限场景仍须单独选择。上节22条为基线已执行证据，不是本轮新增测试通过。
+
+mechanism字段将CONTROLLED_SUBSTITUTE（初始化ERROR、合成onError、焦点请求失败替身）、ANDROID_SYSTEM（实际永久-1竞争）、ANDROID_PERMISSION_STATE和ANDROID_ROUTE_GUARD分别标记。替身不能证明系统确实发出错误；实际永久焦点测试遇到外部音乐活动会SKIP，不自动暂停音乐。人工动态场景会提前提示，仅在观察到真实动态条件时才产生API证据，无扬声器泄漏仍需听感。
+
+本轮安装器返回INSTALL_FAILED_ABORTED（User rejected permissions），用户要求先完成非手动部分，故新设备场景均NOT_RUN。脚本新增已安装目标/测试APK与本地构建SHA核对；不匹配在instrumentation启动前失败，实际负向验证通过，防止旧APK成功运行却被记为新安全用例通过。目标配置及耳机选择未清除。
+
+SpeechDependencies为main中的普通平台依赖边界，默认始终委托原TextToSpeech/AudioManager，无配置开关、反射选择器、fixture或外部入口。失败替身只在androidTest；实际Release/Debug DEX隔离检查也验证替身类未泄漏。操作与证据要求详见[最终验收操作单](stage1-final-acceptance.md)。

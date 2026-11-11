@@ -13,7 +13,10 @@ data class SmsResult(val id: String, val source: SmsSource, val disposition: Sms
     val reason: String, val speech: SpeechResult? = null)
 
 /** Main-looper business boundary for already parsed messages; contains no fixtures or test hooks. */
-class SmsCoordinator(private val app: ProbeApplication) {
+class SmsCoordinator(private val app: ProbeApplication,
+    private val startSpeech: (String, Boolean, String, (SpeechResult) -> Unit) -> Unit = { text, background, id, result ->
+        app.speak(text, background, fromSms = true, smsEventId = id, result = result)
+    }) {
     fun preflight(): String? = when {
         !app.settings.snapshot().announcingEnabled -> "已暂停：新 SMS 不进入播报链路"
         listOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.BLUETOOTH_CONNECT).any {
@@ -64,13 +67,13 @@ class SmsCoordinator(private val app: ProbeApplication) {
                 app.event(decision.status, !app.visible)
                 finish(SmsDisposition.IGNORED, decision.status); return id
             }
-            app.speak(text, !app.visible, fromSms = true, smsEventId = id, result = { speech ->
+            startSpeech(text, !app.visible, id) { speech ->
                 finish(when {
                     speech.busy -> SmsDisposition.BUSY
                     speech.playbackCompleted && speech.focusReleased -> SmsDisposition.COMPLETED
                     else -> SmsDisposition.INCOMPLETE
                 }, speech.reason, speech)
-            })
+            }
         } catch (_: Exception) {
             // Only generated state codes cross this diagnostic boundary, never exception text.
             finish(SmsDisposition.REJECTED, "解析后短信业务处理异常")
