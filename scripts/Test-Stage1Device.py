@@ -3,6 +3,8 @@
 python scripts/Test-Stage1Device.py --ui-smoke
 UI smoke briefly changes the OTP filter and restores it in finally; keep phone idle.
 --set-enabled / --set-boot-restore intentionally change the corresponding real UI switch.
+With no flags this is read-only: it never opens the app. Entry counts refer only to
+retained app logs, not guaranteed broadcast delivery or a replacement for real H07.
 All retained evidence is under ignored app/build/stage1-device, with no device identities.
 """
 import argparse
@@ -42,6 +44,33 @@ class Device:
         result["targetPresent"] = bool(data.get("target"))
         result["recordedBootCount"] = int(data.get("stage1BootCount", -1))
         return result
+
+    def process_present(self):
+        result = subprocess.run(["adb", "-s", self.serial, "shell", "pidof", PACKAGE],
+                                capture_output=True, timeout=10)
+        if result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip():
+            return False  # pidof: no matching process. An ADB error is not absence evidence.
+        if result.returncode != 0:
+            raise RuntimeError("Cannot inspect application process")
+        return bool(result.stdout.strip())
+
+    def retained_entry_counts(self):
+        counts = dict(applicationCreates=0, realSmsEntries=0, bootReceiverEvents=0, activityResumes=0)
+        raw = self.run("logcat", "-d", "-s", "SVA_STAGE0:I", "*:S").decode("utf-8", errors="replace")
+        for line in raw.splitlines():
+            try:
+                entry = json.loads(line[line.index("{"):])
+                if entry.get("package") != PACKAGE:
+                    continue
+                field, value = entry.get("field"), entry.get("value")
+                counts["applicationCreates"] += field == "Application.onCreate"
+                counts["realSmsEntries"] += field == "source" and value == "REAL_SMS"
+                counts["activityResumes"] += field == "MainActivity.onResume"
+                counts["bootReceiverEvents"] += field == "状态" and value in (
+                    "开机状态已恢复为启用，等待新短信", "开机状态为暂停")
+            except (ValueError, TypeError):
+                continue  # Never echo unparsed logs or any arbitrary diagnostic values.
+        return counts
 
     def tree(self):
         self.shell("uiautomator", "dump", "/data/local/tmp/sva-stage1-ui.xml")
@@ -100,6 +129,12 @@ def main():
               "systemBootCount": int(device.shell("settings", "get", "global", "boot_count").strip()),
               "bootCompleted": device.shell("getprop", "sys.boot_completed").strip() == "1",
               "settings": device.settings()}
+    result["processPresentBeforeRead"] = device.process_present()
+    result["smsReceiverResolvable"] = PACKAGE + "/.receiver.SmsReceiver" in device.shell(
+        "cmd", "package", "query-receivers", "--brief", "--user", "0", "-a", "android.provider.Telephony.SMS_RECEIVED")
+    result["bootReceiverResolvable"] = PACKAGE + "/.receiver.BootReceiver" in device.shell(
+        "cmd", "package", "query-receivers", "--brief", "--user", "0", "-a", "android.intent.action.BOOT_COMPLETED")
+    result["retainedAppLogEntryCounts"] = device.retained_entry_counts()
     if args.ui_smoke or args.set_enabled or args.set_boot_restore:
         device.shell("am", "start", "-n", PACKAGE + "/.MainActivity")
         time.sleep(0.5)
@@ -123,6 +158,7 @@ def main():
     if args.set_boot_restore:
         device.top(); device.toggle("开机后恢复工作状态", args.set_boot_restore == "true")
     result["settingsAfter"] = device.settings()
+    result["processPresentAfterRead"] = device.process_present()
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     # This result contains only allowed aggregate status, never body, sender, MAC or serial.
     (EVIDENCE / "verification.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
