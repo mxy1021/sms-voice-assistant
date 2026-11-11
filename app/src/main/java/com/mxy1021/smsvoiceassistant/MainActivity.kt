@@ -27,8 +27,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.mxy1021.smsvoiceassistant.bluetooth.BluetoothProbe
+import com.mxy1021.smsvoiceassistant.bluetooth.ForegroundAudioAccess
+import com.mxy1021.smsvoiceassistant.bluetooth.AudioPortRefresh
 import com.mxy1021.smsvoiceassistant.sms.SpeechFormatter
 import com.mxy1021.smsvoiceassistant.ui.Readiness
+import com.mxy1021.smsvoiceassistant.audio.Stage0Log
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
@@ -38,11 +41,23 @@ class MainActivity : ComponentActivity() {
     private var routeReady by mutableStateOf(false)
     private var checking by mutableStateOf(false)
     private var routeStatus by mutableStateOf("尚未检查")
-    private var requestSequence = 0
+    private val portRefresh by lazy { AudioPortRefresh(this) }
+    private var recoveryAttempted = false
+    private var previousBluetoothPermission: Boolean? = null
     private val audioCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) { refresh() }
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) { refresh() }
     }
+    private val audioAccess = ForegroundAudioAccess(
+        permitted = { granted(Manifest.permission.BLUETOOTH_CONNECT) },
+        register = {
+            getSystemService(AudioManager::class.java).registerAudioDeviceCallback(audioCallback, app.main)
+            Stage0Log.state("context", "audioDeviceListener", "registered;permission=true")
+        },
+        unregister = {
+            getSystemService(AudioManager::class.java).unregisterAudioDeviceCallback(audioCallback)
+            Stage0Log.state("context", "audioDeviceListener", "unregistered")
+        })
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         refresh()
         app.event("权限流程已返回，请核对实际状态；拒绝后可从系统设置授权")
@@ -58,28 +73,56 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStart() {
         super.onStart(); app.visible = true
-        getSystemService(AudioManager::class.java).registerAudioDeviceCallback(audioCallback, app.main)
+        recoveryAttempted = false
+        audioAccess.start()
     }
-    override fun onResume() { super.onResume(); refresh() }
+    override fun onResume() {
+        super.onResume()
+        Stage0Log.state("lifecycle", "MainActivity.onResume", "bluetoothPermission=${granted(Manifest.permission.BLUETOOTH_CONNECT)}")
+        refresh()
+    }
     override fun onStop() {
-        requestSequence++
-        getSystemService(AudioManager::class.java).unregisterAudioDeviceCallback(audioCallback)
+        audioAccess.stop()
+        portRefresh.cancel()
         app.visible = false
         // SMS work is independent of Activity lifecycle. Explicit foreground tests are not.
         if (app.session?.background == false && !app.session!!.isSms) app.session?.cancel()
         super.onStop()
     }
     private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    internal data class BluetoothReadiness(val permission: Boolean, val pairedTarget: Boolean,
+        val connected: Boolean, val routeReady: Boolean, val checking: Boolean, val revision: Int)
+    internal fun bluetoothReadiness() = BluetoothReadiness(granted(Manifest.permission.BLUETOOTH_CONNECT),
+        devices.any { matches(it, app.target) }, connected, routeReady, checking, revision)
     private fun refresh() {
+        val request = audioAccess.begin(app.target) ?: return
+        if (previousBluetoothPermission != request.permitted) {
+            recoveryAttempted = false
+            previousBluetoothPermission = request.permitted
+        }
         revision++
-        val sequence = ++requestSequence
-        val target = app.target
-        devices = BluetoothProbe(this).paired()
-        checking = true; connected = false; routeReady = false
+        Stage0Log.state("context", "foregroundRefresh", "request=${request.sequence};bluetoothPermission=${request.permitted}")
+        val target = request.target
+        devices = if (request.permitted) BluetoothProbe(this).paired() else emptyList()
+        checking = request.permitted; connected = false; routeReady = false
+        if (!request.permitted) {
+            portRefresh.cancel()
+            routeStatus = "蓝牙权限未授予，禁止播报"
+            return
+        }
         routeStatus = "正在检查连接与预期路由"
         try {
             BluetoothProbe(this).inspect(target) { result ->
-                if (sequence == requestSequence && target == app.target) {
+                if (!granted(Manifest.permission.BLUETOOTH_CONNECT)) {
+                    refresh()
+                } else if (audioAccess.accepts(request, app.target)) {
+                    if (result.connected && result.output == null && !recoveryAttempted && app.session == null) {
+                        recoveryAttempted = true
+                        routeStatus = "正在重新同步音频设备信息"
+                        portRefresh.start { refresh() }
+                        return@inspect
+                    }
+                    if (portRefresh.running) return@inspect
                     connected = result.connected; routeReady = result.output != null
                     routeStatus = result.status; checking = false
                 }

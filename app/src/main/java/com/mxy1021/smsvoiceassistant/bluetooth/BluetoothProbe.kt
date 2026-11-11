@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import com.mxy1021.smsvoiceassistant.audio.RoutePolicy
+import com.mxy1021.smsvoiceassistant.audio.Stage0Log
 
 data class RouteResult(val connected: Boolean, val output: AudioDeviceInfo?, val status: String)
 
@@ -31,6 +32,8 @@ class BluetoothProbe(private val context: Context) {
     /** 限时读取配置文件连接状态；所有代理都关闭，不进行扫描或轮询。 */
     fun inspect(target: String?, callback: (RouteResult) -> Unit) {
         if (target.isNullOrBlank() || paired().none { it.address.equals(target, true) }) {
+            Stage0Log.state("context", "routeProbe", "selected=${!target.isNullOrBlank()};pairedMatch=false;" +
+                "permission=${context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED}")
             callback(RouteResult(false, null, "未授权或未选择已配对耳机")); return
         }
         val adapter = context.getSystemService(BluetoothManager::class.java).adapter
@@ -51,9 +54,16 @@ class BluetoothProbe(private val context: Context) {
             val result = try {
                 val audio = context.getSystemService(AudioManager::class.java)
                 val predicted = audio.getAudioDevicesForAttributes(attributes)
-                val output = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+                val outputs = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                val output = outputs.firstOrNull {
                     bluetooth(it) && RoutePolicy.matches(target, listOf(it.address))
                 }
+                Stage0Log.state("context", "routeProbe",
+                    "permission=${context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED};" +
+                        "connected=$connected;outputs=${outputs.size};bluetoothOutputs=${outputs.count { bluetooth(it) }};" +
+                        "blankBluetoothAddresses=${outputs.count { bluetooth(it) && it.address.isBlank() }};" +
+                        "targetOutput=${output != null};predicted=${predicted.size};predictedBluetooth=${predicted.count { bluetooth(it) }};" +
+                        "predictedTarget=${RoutePolicy.matches(target, predicted.map { it.address })}")
                 if (connected && output != null && predicted.all { bluetooth(it) } &&
                     RoutePolicy.matches(target, predicted.map { it.address }))
                     RouteResult(true, output, "连接已确认；预期路由地址匹配，实际路由仍须播放时确认")

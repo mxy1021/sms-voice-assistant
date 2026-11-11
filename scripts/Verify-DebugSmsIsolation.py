@@ -7,7 +7,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 EXPECTED = {"android.permission." + name for name in ("RECEIVE_SMS", "BLUETOOTH_CONNECT", "RECEIVE_BOOT_COMPLETED")}
-MARKERS = (b"DebugSmsInjectionTest", b"DebugSmsFixtures", b"SVA_DEBUG_RESULT", b"SVA_DEBUG_READY",
+MARKERS = (b"DebugSmsInjectionTest", b"ForegroundBluetoothRefreshTest", b"DebugSmsFixtures", b"SVA_DEBUG_RESULT", b"SVA_DEBUG_READY",
            "【测试平台】验证码：".encode("utf-8"), "这是一条用于检查完整语音播放时间上限".encode("utf-8"))
 FAULT_MARKERS = (b"ControlledSpeechDependencies", b"ObservedFailureTts", b"ControlledFailure")
 

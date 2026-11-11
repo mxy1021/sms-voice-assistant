@@ -195,3 +195,49 @@ D02/D04/D05/D07/D09超限结果保留；它们的安全拒绝符合新MVP范围�
 新[最终验收操作单](stage1-final-acceptance.md)给出L01/L02/L03/T10/L05/L06/R20操作、受控证据边界和H01～H07真实SMS顺序（含物理断USB的Home/锁屏/静置/音乐/断连重连/开机首次解锁未开APP）。本轮用户明确先完成文档与非手动测试，这些人工场景均未执行，未发模拟广播替代真实SMS，未自动重启或am force-stop。
 
 目前没有新增已确认的关键安全缺陷；但原真实SMS通知失声尚未完成真实修复后复核，动态路由、权限恢复及新故障测试缺证据，不能据此确认无关键安全问题。范围B已正式接受，仅解除任意长度全文范围阻塞。其他12项放行条件仍须满足，阶段1保持待验收，不进入阶段2。
+
+## 14. 蓝牙重新授权恢复缺陷（2026-11-11，本轮）
+
+### 原始失败与诊断
+
+用户实际撤销BLUETOOTH_CONNECT后，APP正确禁止测试；重新授权返回同一APP进程，耳机连接true，但运行状态路由不匹配，测试按钮禁用。清理后台重开或运行instrumentation后恢复。用户按诊断版复现，并确认蓝牙区域手动“刷新”无效。此失败记录保留。
+
+脱敏日志确认：正常时目标输出匹配、预期设备数1；撤权后Android自行启动的拒权进程在重新授权后，checkSelfPermission=true、profile连接=true、蓝牙音频输出数2，但目标输出匹配false、预期设备数0。onResume和refresh均已运行。故不是仅缺少onResume、只更新Compose状态或把配对当连接的问题。日志未记录地址/设备名、真实短信内容或号码。系统撤权引起的进程变化与人工清后台不同，修复不得依赖用户重启。
+
+Android17官方源码提供与现场一致的缓存机制：AudioManager的getDevices使用进程静态音频端口缓存；getAudioDevicesForAttributes将当前服务端描述符按type/address映射到该缓存；AudioPolicyService在缺蓝牙权限时脱敏端口地址。普通重新注册监听不主动清除端口缓存。因此拒权阶段的音频查询可导致授权后地址仍不匹配；新进程清空静态缓存，解释重开和instrumentation的表象。缓存机制为官方源码分析，设备现场事实为前述计数/权限日志；未把AOSP源码等同于可读取的OriginOS内部实现。
+
+参考：[AudioManager Android17](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/media/java/android/media/AudioManager.java)、[AudioPortEventHandler Android17](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/media/java/android/media/AudioPortEventHandler.java)、[AudioPolicyService Android17](https://android.googlesource.com/platform/frameworks/av/+/refs/heads/android17-release/services/audiopolicy/service/AudioPolicyInterfaceImpl.cpp)。
+
+### 第一轮修复与验证边界
+
+ForegroundAudioAccess集中管理前台监听注册/注销及查询代次：只有实际权限允许时注册；拒权时清空UI设备/连接/路由状态，停止监听；恢复后重新读取配对列表、profile连接及预期音频输出；旧请求、旧目标、已离开前台或已撤权的回调不能更新就绪状态。真实播放的AudioTrack路由门禁保持不变。没有修改正式SMS Receiver、规则、持久化配置、TTS或PCM内部流程。
+
+新增8项受控单元测试覆盖拒权启动、授权恢复、撤权注销、旧回调、目标变化、离开前台及反复循环；这些不冒充真实权限变化。ForegroundBluetoothRefreshTest在实际设备上验证五次Home/返回的真实Activity生命周期和实际权限读取；真正撤权会终止目标进程，因此完整撤销/重新授权另需人工两轮确认。现有Readiness/RoutePolicy测试继续覆盖已连接但路由不匹配时拒绝。
+
+当前主机构建Debug、androidTest、Release及testDebugUnitTest/lintDebug通过：59项单元测试、0失败/错误，Lint0错误16警告。实际Manifest/DEX隔离检查通过：三项原权限、Service0、受系统权限保护的SMS Receiver保持，Release无模拟入口。最终设备回归和本轮修复结论待后续证据补齐，不以构建成功代替真机恢复。
+
+### 补录的用户验收证据
+
+用户本轮明确报告Safety六项自动化通过、L02动态断连与L03路由切换自动化及人工通过；T10实际撤权保护PASS，未撤权及恢复后的权限拒绝用例SKIP。上述是用户提供的后续结果，保留此前安装器拒绝/NOT_RUN历史。T10的SKIP不能证明重新授权恢复，新缺陷在完成复测前仍阻塞。本轮不判定阶段1正式通过。
+
+### 第二轮恢复方案（设备验证前）
+
+第一轮仅按权限延迟注册监听的候选版，现场仍记录一次授权后目标输出false/预期数量0，不能视为修复通过。新增前台、单次、有界的AudioPortRefresh：只在实际蓝牙权限允许、profile确认连接但严格路由不匹配、无进行中语音会话时触发。通过公开AudioTrack路由回调使框架重新获取端口信息；Android17的AudioTrack.broadcastRoutingChange在分发回调前重置AudioManager端口代次（[官方源码](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/media/java/android/media/AudioTrack.java)）。这是公开回调机制的兼容性处理，不调用隐藏API/反射，不修改系统策略。
+
+恢复轨道音量为0，不调用任何write方法、PCM写入恒为0、不持有短信或验证码、不申请焦点、不改全局音量，仅偏好现有蓝牙输出，800ms超时或离开前台立即释放。它的路由不作为目标耳机身份或播报许可；回调/超时结束后必须重新读取已配对列表、profile连接、目标完整地址和预期音频路由。检查仍不匹配则仍然禁止播报。每次前台/权限变化最多一次，无后台轮询；真正语音播放架构未改。
+
+新增真机测试分别验证真实路由回调后释放并严格重查、取消后晚到回调不再更新、真实Activity连续前后台5次。这些测试与用户实际撤销/恢复两轮分开记录；原始T10恢复失败不能被新进程instrumentation启动掩盖。设备结果待后续补录。
+
+### 第二轮现场观测（手动听感仍待确认）
+
+应用与测试APK均已正常install -r更新成功，保留数据。恢复版本的同一processRun中实际观察到：onResume蓝牙权限false → onResume权限true → profile连接true而targetOutput=false/predicted=0 → audioPortRefresh真实routingCallback=true、pcmBytesWritten=0、focusRequested=false、released=true → 完整routeProbe恢复targetOutput=true、predicted=1、predictedTarget=true。该序列中没有进程重启或instrumentation；因此不是用启动测试掩盖状态问题。按钮、固定语音及第二次撤权/恢复的用户确认尚待补录，不凭这些API日志宣布听感通过。
+
+### 最终真机确认与工程结果
+
+用户明确确认最新版无需清理后台/重开/手动刷新，两轮真实系统撤权→返回禁止→重新授权→返回均自动恢复；测试按钮可用，固定语音完整从指定耳机听到。现场日志对应每轮在各自拒权启动进程内完成授权后的恢复，不是重启掩盖。Android在撤权时自行结束旧进程是系统权限机制，恢复不要求用户重新启动。
+
+人工完成后才运行instrumentation，避免它重建进程干扰恢复现场。ForegroundBluetoothRefreshTest实际OK (3 tests)：真实Activity五次Home/返回/权限与设备路由重查、真实空轨道路由回调后释放并严格重查、取消后晚到回调不生效。无跳过或失败。随后Test-DebugSms.ps1 -Case Safety返回0、6条PASS、FAIL0/SKIP0：L01.normalStop和R20.ruleChange在正常PCM实际写入后停止/改规则并终结不复活；L05.init、L05.synthesis和L06.denied明确使用CONTROLLED_SUBSTITUTE，零PCM且清理；L06.permanent通过ANDROID_SYSTEM实际-1取消及释放、不复活。这些均不声明收到真实SMS或提供新的音乐听感证据。
+
+最终Debug/androidTest/Release构建、59项单元测试（0失败/错误）、Lint（0错误16警告）通过；实际合并Manifest及三APK DEX隔离检查通过，新增真机测试类仅在测试APK。原三权限、Service0、真实SMS Receiver及PCM核心代码保持。应用和测试APK保留数据更新Success；配置四布尔值、目标耳机指纹与本轮开始一致，无敏感正文/地址/设备序列号/原始日志进入Git。
+
+结论：本次蓝牙权限恢复缺陷已修复并通过目标机重复验收；T10本次蓝牙范围通过，原失败及第一候选失败记录保留。其他真实SMS、通知音焦点、后台及断USB待验收事项维持原状态；阶段1整体仍待验收，不进入阶段2。Git普通提交/推送及最终SHA由交付消息报告。
