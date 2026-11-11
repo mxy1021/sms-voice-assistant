@@ -150,3 +150,29 @@ mechanism字段将CONTROLLED_SUBSTITUTE（初始化ERROR、合成onError、焦�
 本轮安装器返回INSTALL_FAILED_ABORTED（User rejected permissions），用户要求先完成非手动部分，故新设备场景均NOT_RUN。脚本新增已安装目标/测试APK与本地构建SHA核对；不匹配在instrumentation启动前失败，实际负向验证通过，防止旧APK成功运行却被记为新安全用例通过。目标配置及耳机选择未清除。
 
 SpeechDependencies为main中的普通平台依赖边界，默认始终委托原TextToSpeech/AudioManager，无配置开关、反射选择器、fixture或外部入口。失败替身只在androidTest；实际Release/Debug DEX隔离检查也验证替身类未泄漏。操作与证据要求详见[最终验收操作单](stage1-final-acceptance.md)。
+
+## H01通知焦点时序专项
+
+所有以下内容均是固定人工SMS业务输入和真实Android焦点竞争，不创建系统通知、不播放测试通知音、不投递系统SMS广播，不证明真实运营商通知兼容。应用已新增统一1200ms初次焦点窗口，REAL_SMS/DEBUG_SIMULATION相同；8秒预算不重置。
+
+```powershell
+.\scripts\Test-DebugSms.ps1 -Case NotificationBefore
+.\scripts\Test-DebugSms.ps1 -Case NotificationStartup
+.\scripts\Test-DebugSms.ps1 -Case NotificationLate
+.\scripts\Test-DebugSms.ps1 -Case Focus
+.\scripts\Test-DebugSms.ps1 -Case PauseDisconnect
+```
+
+Before：通知焦点已存在后注入；Startup：注入后约900ms请求通知用途MAY_DUCK并持有4866ms，用于新初次焦点窗口回归；二者要求API完整完成、实际路由匹配与释放，听感单列MANUAL_REQUIRED。Late：语音写入后再等待500ms请求竞争焦点并持有4866ms，期望剩余预算不足安全拒绝恢复，不视作全文成功。
+
+NotificationRepro是开发诊断旧版时序的基线用例：在未加入1200ms窗口的诊断APK中实际复现[-3,1]后预算不足，PASS只代表复现成功；修复版不应拿该“必须出现旧失败”的用例作通过判据，应运行NotificationStartup。历史执行及字节/预算见stage1-report.md第15节。
+
+PauseDisconnect需要物理操作：耳机已连接、准备好断开，在本机PowerShell启动；看到DISCONNECT_WHILE_PAUSED时，测试已实际观测到-3并暂停，立即断开目标耳机，结束后重连。必须在原8秒内观测特定平台断连/路由守卫才能授予API断言；没赶上则SKIP，不延长预算。再人工确认没有手机语音。实时提示使用Host输出，保持内部ADB结果对象结构不被提示字符串混合。
+
+Focus包含实际-3/GAIN短恢复、暂停时停止、原预算超时；永久-1、受控请求失败等用Safety单独区分。它们均不替代H01真实短信复测。H02～H07因H01阻塞暂停，不进入阶段2。
+
+
+本轮后续确认：真实H01一条及时完整、铃声未截断、无手机语音；与模拟结果分开存档。真实音乐下固定模拟Otp完整，用户确认降低/恢复。暂停断连脚本现提供中文【现在断开耳机】实时提示及3秒准备倒计时，准备发生在提交之前；自动日志已有暂停后目标输出移除取消/释放，人工听感仍需明确反馈。未观测到条件的两轮仍保留SKIP。
+
+
+最后用户本机按中文提示完成PauseDisconnect，截图显示assertions=PASS、status=MANUAL_REQUIRED、真实-3后目标输出移除取消且释放/不复活；用户随后确认无手机语音，故本项人工听感通过，原两次SKIP保留。H01真实复测及相关安全/音乐回归最终通过，原FAIL保留，H02～H07仍本轮暂停，阶段1未整体验收。

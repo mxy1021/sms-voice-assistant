@@ -7,12 +7,15 @@ Build/install instructions and evidence limits: docs/debug-sms-testing.md
 param(
     [ValidateSet('Otp','OtpFull','Normal','Numbers','Mixed','OtpAmbiguous','Long','Long80','Long81',
         'LongPcm','Rapid','Disabled','Disconnected','Focus','Multipart','Logic','All','Safety','StopDuring',
-        'RulesDuring','TtsFailures','FocusFailure','FocusPermanent','BluetoothPermission','DisconnectDuring','RouteDuring')]
+        'RulesDuring','TtsFailures','FocusFailure','FocusPermanent','BluetoothPermission','DisconnectDuring','RouteDuring',
+        'NotificationRepro','NotificationStartup','NotificationBefore','NotificationLate','PauseDisconnect')]
     [string]$Case = 'All',
     [string]$Serial
 )
 
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $adbCommand = Get-Command adb -ErrorAction SilentlyContinue
 $adbPath = if ($adbCommand) { $adbCommand.Source } else { $null }
@@ -48,7 +51,10 @@ function Invoke-SvaAdb([string[]]$Arguments, [int]$TimeoutSeconds = 30, [string]
             if ($null -eq $line) { break }
             [void]$output.AppendLine($line)
             if ($line -match 'SVA_DEBUG_ACTION (DISCONNECT_DURING_SPEECH|ROUTE_DURING_SPEECH)\s*$') {
-                Write-Output "MANUAL_REQUIRED action=$($Matches[1]); fixed speech starts in 3 seconds. Only act if prepared."
+                Write-Host "MANUAL_REQUIRED action=$($Matches[1]); fixed speech starts in 3 seconds. Only act if prepared."
+            }
+            if ($line -match 'SVA_DEBUG_ACTION DISCONNECT_WHILE_PAUSED\s*$') {
+                Write-Host '【现在断开耳机】已确认真实临时失焦并暂停，请立即断开指定耳机。原8秒预算不延长。 action=DISCONNECT_WHILE_PAUSED'
             }
             if ($ForegroundComponent -and -not $foregroundStarted -and $line.Contains('SVA_DEBUG_READY')) {
                 $foregroundStarted = $true
@@ -147,6 +153,11 @@ try {
     $activityName = $launcher.GetAttribute('name','http://schemas.android.com/apk/res/android')
     if ($activityName.StartsWith('.')) { $activityName = "$packageName$activityName" }
     if ($activityName -notmatch '^[A-Za-z0-9_.]+$') { throw 'Invalid launcher component.' }
+    if ($Case -eq 'PauseDisconnect') {
+        Write-Host '准备：暂停音乐、连接指定耳机，准备好手机上的断开操作；不需要点APP语音按钮。'
+        foreach ($countdown in 3..1) { Write-Host "测试即将开始：$countdown"; Start-Sleep -Seconds 1 }
+        Write-Host '等待真实暂停提示；看到【现在断开耳机】再立即断开。结束后请重连。'
+    }
     Write-Output "DEBUG_SIMULATION fixture=$Case; waiting for terminal instrumentation results. Hearing remains manual."
     $execution = Invoke-SvaAdb -Arguments ($targetArguments + @('shell','am','instrument','-w','-r',
         '-e','class',$testClass,'-e','fixture',$Case,$components[0])) -TimeoutSeconds 240 -ForegroundComponent "$packageName/$activityName"

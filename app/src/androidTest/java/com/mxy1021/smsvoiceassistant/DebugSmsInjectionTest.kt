@@ -193,6 +193,9 @@ class DebugSmsInjectionTest {
                 "resume" -> { main { audio.abandonAudioFocusRequest(contender) }; acquired = false }
                 "stop" -> main { app.setAnnouncingEnabled(false) }
                 "timeout" -> Unit // Hold actual competing focus; original 8-second timeout must fire.
+                "disconnect" -> instrumentation.sendStatus(2, Bundle().apply {
+                    putString("stream", "\nSVA_DEBUG_ACTION DISCONNECT_WHILE_PAUSED\n")
+                })
             }
             val r = await(job)
             val s = r.speech!!
@@ -205,10 +208,18 @@ class DebugSmsInjectionTest {
             } else {
                 assertFalse(s.playbackCompleted)
                 if (mode == "timeout") assertTrue(s.reason.contains("8") || s.reason.contains("预算"))
+                if (mode == "disconnect") {
+                    val routeGuard = s.reason.startsWith("目标蓝牙断开") || s.reason.startsWith("目标输出被移除") ||
+                        s.reason == "实际路由改变或权限撤销，取消播报"
+                    if (!routeGuard) {
+                        emit(id, "SKIP", "NO_PLATFORM_DISCONNECT_DURING_REAL_FOCUS_PAUSE_OBSERVED", r); return
+                    }
+                }
                 main { audio.abandonAudioFocusRequest(contender) }; acquired = false
                 Thread.sleep(100)
                 assertTrue("$id must not revive after contender releases", idle())
-                emit(id, "PASS", "REAL_FOCUS_PAUSE_THEN_${mode.uppercase()};NO_SESSION_REVIVAL", r)
+                emit(id, if (mode == "disconnect") "MANUAL_REQUIRED" else "PASS",
+                    "REAL_FOCUS_PAUSE_THEN_${mode.uppercase()};NO_SESSION_REVIVAL", r)
             }
         } finally {
             if (acquired) main { audio.abandonAudioFocusRequest(contender) }
@@ -231,6 +242,68 @@ class DebugSmsInjectionTest {
             assertFalse(com.mxy1021.smsvoiceassistant.audio.RoutePolicy.matches("synthetic-target", listOf("other-target")))
             emit("D00", "PASS", "DEFAULTS_RULE_DEPENDENCY_REAL_PREFERENCE_RELOAD_AND_IDENTITY_REJECTION")
         } finally { configure(before.otpOnlyEnabled, before.otpSimplifyEnabled) }
+    }
+
+    /** Controlled notification-USAGE focus owner, not carrier SMS and not an audible ringtone. */
+    private fun notificationTiming(mode: String) {
+        val id = "N.$mode"
+        configure(true, true)
+        audioCondition()?.let { emit(id, "SKIP", it); return }
+        val audio = instrumentation.context.getSystemService(AudioManager::class.java)
+        val competitorChanges = mutableListOf<Int>()
+        val contender = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            .setOnAudioFocusChangeListener({ competitorChanges.add(it) }, app.main).build()
+        var acquired = false
+        var job: Submission? = null
+        try {
+            if (mode == "before") {
+                acquired = main { audio.requestAudioFocus(contender) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }
+                assertTrue("Real notification focus grant required", acquired)
+            }
+            val submittedAt = SystemClock.elapsedRealtime()
+            val current = submit(DebugSmsFixtures.SHORT_OTP); job = current
+            if (mode == "late") {
+                assertTrue(waitUntil(3000) { main { (app.session?.bytesWritten ?: 0) > 0 } })
+                Thread.sleep(500)
+            } else if (mode != "before") {
+                Thread.sleep((submittedAt + 900 - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+            }
+            if (!acquired) {
+                acquired = main { audio.requestAudioFocus(contender) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }
+                assertTrue("Real competing focus request required", acquired)
+            }
+            val holdUntil = SystemClock.elapsedRealtime() + if (mode == "before") 1500 else 4866
+            if (mode == "late" || mode == "repro") {
+                assertTrue("Actual -3 required, not a synthetic callback", waitUntil(1000) { main {
+                    app.smsEvents.value.first { it.id == current.id }.fields["onAudioFocusChange"] == "-3"
+                } })
+                val bytes = main { app.session?.bytesWritten }
+                Thread.sleep(150)
+                assertEquals("No writes during notification focus loss", bytes, main { app.session?.bytesWritten })
+            }
+            Thread.sleep((holdUntil - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+            main { audio.abandonAudioFocusRequest(contender) }; acquired = false
+            val r = await(current); val s = r.speech!!
+            assertTrue(s.focusReleased); assertTrue(idle())
+            if (mode in setOf("before", "startup")) {
+                assertTrue("Speech must finish within the original budget", s.playbackCompleted)
+                assertTrue(s.actualRouteConfirmed)
+                assertTrue("Our initial legal focus request must reach the competing owner", main { competitorChanges.contains(-3) })
+            } else {
+                assertFalse(s.playbackCompleted)
+                assertTrue("Long loss must cancel on insufficient budget", s.reason.contains("预算") || s.reason.contains("剩余时间不足"))
+                assertTrue(s.focusChanges.contains(-3))
+            }
+            Thread.sleep(100); assertTrue("Late gain cannot revive terminal speech", idle())
+            emit(id, if (s.playbackCompleted) "MANUAL_REQUIRED" else "PASS",
+                "CONTROLLED_NOTIFICATION_FOCUS_ONLY;CARRIER_SMS_NOT_TESTED;COMPLETE=${s.playbackCompleted};" +
+                    "COMPETITOR_CHANGES=${main { competitorChanges.toList() }};BUDGET_UNCHANGED", r, "ANDROID_SYSTEM")
+        } finally {
+            if (acquired) main { audio.abandonAudioFocusRequest(contender) }
+            job?.let { if (!it.done.isDone) { main { app.session?.cancel() }; await(it) } }
+        }
     }
 
     private fun activeChange(stop: Boolean) {
@@ -416,6 +489,11 @@ class DebugSmsInjectionTest {
                         "Disabled" -> disabled()
                         "Disconnected" -> disconnected()
                         "Focus" -> { focus("resume"); focus("stop"); focus("timeout") }
+                        "NotificationRepro" -> notificationTiming("repro")
+                        "NotificationStartup" -> notificationTiming("startup")
+                        "NotificationBefore" -> notificationTiming("before")
+                        "NotificationLate" -> notificationTiming("late")
+                        "PauseDisconnect" -> focus("disconnect")
                         "StopDuring" -> activeChange(true)
                         "RulesDuring" -> activeChange(false)
                         "TtsFailures" -> { controlledFailure(ControlledFailure.INIT); controlledFailure(ControlledFailure.SYNTHESIS) }

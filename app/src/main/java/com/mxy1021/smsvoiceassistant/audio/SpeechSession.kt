@@ -62,9 +62,11 @@ class SpeechSession(
     val hasAudioFocus get() = focusGate.held
     private val focusChanges = mutableListOf<Int>()
     private var pcmDuration: Long? = null
+    private var totalPcmBytes = 0
     private var routeConfirmed = false
     private var expectedFrames = 0L
     private var onFocusReady: (() -> Unit)? = null
+    private var pendingStart: Runnable? = null
     @Volatile private var pcmOverflow = false
     private val startElapsed = app.receivedAt(smsEventId) ?: SystemClock.elapsedRealtime()
     private fun mark(point: String, at: Long = SystemClock.elapsedRealtime()) {
@@ -85,6 +87,19 @@ class SpeechSession(
     private fun log(value: String) = app.timeline.add(value)
     private fun sms(key: String, value: String) { if (fromSms) app.smsStatus(key, value) }
     private fun record(key: String, value: Any?) { if (fromSms) app.updateSmsEvent(smsEventId, key, value?.toString() ?: "未知") }
+    /** Generated scalars only: never text, audio, sender or device identity. */
+    private fun trace(point: String, at: Long = SystemClock.elapsedRealtime(), detail: String = "") {
+        val now = SystemClock.elapsedRealtime()
+        val source = app.smsEvents.value.firstOrNull { it.id == smsEventId }?.fields?.get("source") ?: "MANUAL_VOICE_TEST"
+        val played = runCatching { track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) }.getOrNull()
+        val remainingPcm = if (played != null && rate > 0)
+            ((expectedFrames - played).coerceAtLeast(0) * 1000 + rate - 1) / rate else null
+        Stage0Log.state("audioSession", point,
+            "source=$source;eventElapsedMs=$at;dispatchElapsedMs=$now;elapsedMs=${now - startElapsed};" +
+                "remainingBudgetMs=${SmsSafetyWindow.SESSION_BUDGET_MS - (now - startElapsed)};" +
+                "bytesWritten=$bytesWritten;totalPcmBytes=$totalPcmBytes;pcmMs=$pcmDuration;" +
+                "remainingPcmMs=$remainingPcm;focusHeld=${focusGate.held};routeConfirmed=$routeConfirmed;$detail", smsEventId)
+    }
     private val timeout = Runnable {
         mark("Handler超时回调")
         end("8 秒总预算超时；实际elapsed=${SystemClock.elapsedRealtime() - startElapsed}ms；合成请求=$synthesisRequested，onStart=$synthesisStarted，合成完成=$synthesisDone，播放完成=$playbackDone")
@@ -240,7 +255,7 @@ class SpeechSession(
                     synthesisDone = true
                     log("onDone：文件合成完成，PCM字节数=${synchronized(pcm) { pcm.size() }}；接下来才申请焦点与播放")
                     record("onDone", "已收到（文件合成，尚不代表实际播放完成）")
-                    play(output)
+                    preparePlayback(output)
                 } catch (_: Exception) { end("音频播放初始化失败") }
             }
         }
@@ -254,7 +269,26 @@ class SpeechSession(
     private fun matches(device: AudioDeviceInfo?) = permitted() && device != null &&
         BluetoothProbe.bluetooth(device) && RoutePolicy.matches(target, listOf(device.address))
 
+    private fun preparePlayback(output: AudioDeviceInfo) {
+        val delay = SpeechStartPolicy.delayMs(fromSms, startElapsed, SystemClock.elapsedRealtime())
+        if (delay == 0L) { play(output); return }
+        stage = "初次焦点启动窗口"
+        trace("initialFocusWindow", detail = "delayMs=$delay;windowMs=${SpeechStartPolicy.SMS_INITIAL_WINDOW_MS}")
+        pendingStart = Runnable {
+            pendingStart = null
+            if (!alive("初次焦点窗口结束")) return@Runnable
+            // Connection and expected route may change during the wait. Never trust the old output.
+            BluetoothProbe(app).inspect(target) { fresh ->
+                if (alive("初次焦点前路由重查")) {
+                    if (fresh.output == null) end("初次焦点前目标连接或预期路由无法确认，拒绝播报")
+                    else play(fresh.output)
+                }
+            }
+        }.also { main.postDelayed(it, delay) }
+    }
+
     private fun focusChanged(change: Int) {
+        trace(if (ended) "lateFocusIgnored" else "focusChange", detail = "change=$change")
         if (ended) return
         log("onAudioFocusChange=$change")
         focusChanges.add(change)
@@ -264,6 +298,7 @@ class SpeechSession(
             SpeechFocusAction.PAUSE -> {
                 try { track?.pause() } catch (_: Exception) { end("临时焦点丢失时暂停语音失败"); return }
                 mark("语音临时暂停")
+                trace("pcmPaused", detail = "change=$change")
                 app.event("临时音频占用：本次语音暂停等待焦点，仍受8秒预算限制", background)
             }
             SpeechFocusAction.RESUME -> {
@@ -271,6 +306,7 @@ class SpeechSession(
                 val player = track ?: return
                 val played = player.playbackHeadPosition.toLong() and 0xffffffffL
                 val remaining = ((expectedFrames - played).coerceAtLeast(0) * 1000 + rate - 1) / rate
+                trace("resumeDecision", detail = "remainingFits=${PcmBudget.remainingFits(remaining, SystemClock.elapsedRealtime() - startElapsed)};actualRouteMatches=${matches(player.routedDevice)}")
                 if (!PcmBudget.remainingFits(remaining, SystemClock.elapsedRealtime() - startElapsed)) {
                     end("焦点恢复后剩余时间不足，取消未完成语音"); return
                 }
@@ -280,6 +316,7 @@ class SpeechSession(
                 try {
                     player.play()
                     mark("语音焦点恢复")
+                    trace("pcmResumed")
                     app.event("焦点已恢复，继续本次语音；完整听感仍待确认", background)
                     onFocusReady?.invoke()
                 } catch (_: Exception) { end("焦点恢复后无法继续语音") }
@@ -293,6 +330,7 @@ class SpeechSession(
         stage = "PCM 格式校验"
         val data = synchronized(pcm) { pcm.toByteArray().also { pcm.clear() } }
         playbackPcm = data
+        totalPcmBytes = data.size
         if (rate !in 8000..48000 || channels !in 1..2 ||
             encoding != AudioFormat.ENCODING_PCM_16BIT || data.isEmpty() || pcmOverflow) {
             data.fill(0); end("引擎未返回支持的 PCM，拒绝播报"); return
@@ -318,6 +356,7 @@ class SpeechSession(
         mark("requestAudioFocus完成")
         record("焦点申请时APP前台", app.visible)
         record("requestAudioFocus", focusResult)
+        trace("focusRequestResult", detail = "result=$focusResult")
         log("requestAudioFocus=$focusResult（1=授予，0=失败，2=延迟）")
         sms("焦点", if (focusResult == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "焦点已获得；等待实际播放" else "蓝牙/预期路由满足，但焦点申请失败：$focusResult")
         if (focusResult != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
@@ -399,6 +438,10 @@ class SpeechSession(
                         }
                         offset += count
                         writtenBytes.addAndGet(count)
+                        if (offset == count) {
+                            val writtenAt = SystemClock.elapsedRealtime()
+                            main.post { trace("firstPcmWrite", writtenAt) }
+                        }
                     }
                     if (!ended && offset == data.size) {
                         val writtenAt = SystemClock.elapsedRealtime()
@@ -422,9 +465,14 @@ class SpeechSession(
     fun cancel() = end("用户取消，焦点已释放")
     private fun end(code: String) {
         if (ended) return
+        trace("sessionEnding", detail = "reason=$code;stage=$stage;playbackCompleted=$playbackDone")
+        record("PCM写入字节数", bytesWritten)
+        record("完整PCM字节数", totalPcmBytes)
+        record("焦点变化序列", focusChanges.joinToString(","))
         ended = true
         focusGate.end()
         onFocusReady = null
+        pendingStart?.let { main.removeCallbacks(it) }; pendingStart = null
         playbackPcm?.fill(0)
         playbackPcm = null
         main.removeCallbacks(timeout)
@@ -444,6 +492,7 @@ class SpeechSession(
             runCatching { dependencies.abandonFocus(audio, it) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }.getOrDefault(false).also { mark("焦点释放完成") }
         } ?: true
         log(if (focus == null) "未申请焦点，未调用 abandonAudioFocusRequest" else "焦点释放成功=$focusReleased")
+        trace("focusReleased", detail = "success=$focusReleased")
         if (tts != null) {
             log("调用 tts.stop：合成请求前=${!synthesisRequested}，合成onDone前=${!synthesisDone}，实际播放完成前=${!playbackDone}；原因=$code")
             log("tts.stop 返回=${runCatching { tts!!.stop() }.getOrNull() ?: "异常"}")
