@@ -328,6 +328,13 @@ class SpeechSession(
     }
 
     private fun play(output: AudioDeviceInfo) {
+        // A delayed route callback runs after onDone's try/catch has returned.
+        // Keep native focus/track setup failures inside this session's cleanup path.
+        try { playChecked(output) }
+        catch (_: Exception) { end("音频播放初始化失败") }
+    }
+
+    private fun playChecked(output: AudioDeviceInfo) {
         if (!alive("PCM播放准备")) return
         stage = "PCM 格式校验"
         val data = synchronized(pcm) { pcm.toByteArray().also { pcm.clear() } }
