@@ -1,6 +1,6 @@
 # V2.0 阶段1.1测试结果
 
-日期：2026-11-15。**当前：93项JVM和19项设备功能测试通过；8秒/8.5秒各7项受控守卫断言通过，但8.5秒精确资源释放8510ms，严格预算FAIL，不采用、不扩容，最终8秒APK已安装并哈希核验。** 四组合8格、5位/前导零、联系人及撤权恢复、三档前台音乐听感、Home/锁屏、总开关、断连重连、蓝牙撤权恢复均由用户确认。耳机双击仅有部分真机可行性成功，不作为正式功能。静置/重启、长文本及连续真实队列等仍待验收。以下开发初期快照和失败记录保留，以文首及后续追加的最新结论为准。
+日期：2026-11-15。**当前：93项JVM、19项设备功能回归及1项受控MediaSession异常释放测试通过；8秒/8.5秒各7项受控守卫断言通过，但8.5秒精确资源释放8510ms，严格预算FAIL，不采用、不扩容，最终8秒APK已安装并哈希核验。** 四组合8格、5位/前导零、联系人及撤权恢复、三档前台音乐听感、Home/锁屏、总开关、断连重连、蓝牙撤权恢复均由用户确认。耳机双击仅有部分真机可行性成功，不作为正式功能。静置/重启、长文本及连续真实队列等仍待验收。以下开发初期快照和失败记录保留，以文首及后续追加的最新结论为准。
 
 ## 原安装版本8秒基线（未安装或改动手机代码前）
 
@@ -177,3 +177,15 @@
 这是测试APK固定语音，**不是生产功能或真实SMS按键集成测试**；没有正式开关、生产MediaSession或常驻对象。Home专项、无音乐停止、其他按键/其他设备控制边界、平台真实异常尚未验证，不承诺不改变全部原有控制。尚未满足全部正式实现门槛，维持不正式实现。
 
 另补测试APK受控异常入口controlledMediaFailure：在临时MediaSession激活后抛出固定异常，要求0字节写入、焦点释放、会话释放；释放标志仅在原生release返回后设置。该测试包assembleDebugAndroidTest成功，产物隔离复查PASS。继续工作时ADB未检测到手机，尚未安装执行，明确记NOT_RUN；不能用编译成功冒称异常退出已通过。生产Debug APK及其指纹不变。
+
+后续连接恢复后，测试APKinstall -r成功。受控异常首轮1项失败在created断言：严格蓝牙预检查记录目标连接=false，于创建MediaSession前拒绝，尚未触发受控异常；这既不证明异常释放失败，也不能计作该路径通过。原输出headset-probe-controlled-exception.txt与脱敏media-controlled-first-precondition.json保留，已请用户连接原耳机后复测。
+
+### 异步播放初始化异常：发现缺陷、修复与复测
+
+连接原耳机后的第二轮真实触发固定CONTROLLED_MEDIA_SETUP_FAILURE，进程崩溃，未取得应用终结/释放断言；原记录headset-probe-controlled-exception-rerun.txt保留。根因：onDone内的try/catch不能覆盖1800ms延迟窗口后的BluetoothProbe异步回调，该回调直接进入play，焦点/轨道初始化异常会逃逸主线程。这是本次受控探针揭示的异常处理缺口，不是普通短信或平台随机抛错的发生率证据。
+
+修复913bb1fa8b72aa092387282b419cc618d34f1b18：统一play入口捕获Exception，进入现有end清理路径；不改变预算、焦点策略、路由门禁、PCM或增益参数。原始异常文本不输出为生产诊断。相同受控异常复测1/1 PASS：created=true、released=true、keyUps=0、controlledFailure=true；断言语音写入0字节、焦点释放、app.session为空。这里只验证固定受控异常，不冒称覆盖所有系统故障。
+
+该修复后93/93 JVM、19/19设备功能/规则/队列回归均PASS，0失败0跳过；Debug/Release/androidTest构建PASS，Lint仍0错误16/15警告，产物隔离4权限0Service PASS。证据async-playback-guard-build.log、headset-probe-controlled-exception-fixed.txt、instrumentation-async-guard.txt。用户为永久焦点丢失回归主动暂停音乐，测试完成后gain恢复原6dB，原运行/两个规则/开机/耳机配置保留。
+
+修复APK同签名install -r并从手机拉取核验：Debug SHA256=3160606f086104011b7680afae3f4b94512a4cf911a2e9d20e82d0dbfcef5c50；Release unsigned=430620911b74712de6732efe810e1e2baec604f8a2a24440f3299e7ef4dd740c。旧7729f62d…构建及元数据已另存feature-8000-before-async-guard，不覆盖历史实验和人工证据；SMS-000088～107属于修复前构建，修复后的真实短信另记。

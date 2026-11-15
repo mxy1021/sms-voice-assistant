@@ -17,7 +17,7 @@
 ## 最终问题逐项回答（当前可证实范围）
 
 1. **六项分别完成多少？** F1/F2/F3/F5已实现且自动化通过，真实SMS覆盖上述部分；F4完成8/8.5受控对比，严格预算未通过，未采用8.5；F6只有测试APK探针，未正式实现。队列按本轮追加范围实现。
-2. **哪些自动化通过？** 93/93 JVM；8秒19/19设备功能/队列；8秒及8.5秒各7/7受控PCM预算断言（严格预算另判FAIL）；四组合UI、Debug/Release/androidTest构建、Lint和产物隔离均通过。计数分组不同，不重复当成真实SMS数。
+2. **哪些自动化通过？** 异步播放异常修复后93/93 JVM、19/19设备功能/队列及1/1固定受控MediaSession异常释放；此前8秒及8.5秒各7/7受控PCM预算断言（严格预算另判FAIL）；四组合UI、Debug/Release/androidTest构建、Lint和产物隔离均通过。计数分组不同，不重复当成真实SMS数。
 3. **哪些真实SMS通过？** 用户确认5位及前导零、四组合8格、联系人全文及权限撤销/恢复、三档前台音乐清晰无失真/爆音、Home/锁屏音乐降低恢复、总开关取消、断连重连、蓝牙撤权恢复及无手机语音。SMS-000088～107共20条：15完成、2规则忽略、2安全取消、1撤权退出后终结不可观测。链接因运营商受阻，混合码、无联系人、长文本、真实队列等仍未完整覆盖。
 4. **8.5秒是否通过？** 未通过，不采用。固定慢初始化超时的精确T11=8510ms，超过8500ms；净变更仅8000→8500。7项守卫断言通过不能抵消严格预算反例；真实候选PendingResult及系统全周期未测。
 5. **实际finish耗时？** 截至107，15条完整真实SMS从onReceive到实际finish返回为3493～5035ms；两条忽略8/10ms；总开关和断连取消3073/3142ms；撤蓝牙106无finish记录，记不可测。逐条时序见测试结果。旧版本87为5018ms的finish后测点，不冒称精确调用；候选真实finish没有数据。
@@ -29,7 +29,7 @@
 11. **新增Service或长期后台机制？** 没有。合并Manifest、Debug/Release产物检查均0 Service，无FGS、WorkManager、轮询、常驻媒体或AccessibilityService；联系人工作仅当前查询，超时放弃结果并取消，最多一项，不能保证不配合取消的系统Provider内部执行时间。
 12. **Manifest新增权限？** 仅可选android.permission.READ_CONTACTS。总共RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT_COMPLETED、READ_CONTACTS；无INTERNET、READ_SMS、通知监听或无障碍权限。
 13. **未完成测试？** 真实链接（运营商受阻）、混合码/无联系人、连续真实队列、长语音与超限真实SMS、断USB静置/重启/通知音专项、8.5秒B01～B12全套和真实finish/系统全周期、耳机无音乐停止/Home/其他控制与来源边界。详见[本轮测试计划](stage1.1-test-plan.md)及[待验收表](stage1.1-acceptance.md)。
-14. **Git与工作区？** 功能源代码已推送feature/v2-sms-speech-experience，最终代码基线7bf1ee3ff95aa16d0baf3359da848cf9ef9b29c2（预算对比的共同基线仍为5da72ad）；候选experiment/sms-budget-8500ms也独立推送，候选构建基线44bc07e99f00615eb86b797cdf063bfc3c6d20cd。最终文档提交SHA、远端一致性与干净工作区以最后核验和交付回复为准。不合并main、不改稳定分支/标签、不强推。
+14. **Git与工作区？** 功能分支feature/v2-sms-speech-experience，当前生产源代码基线913bb1fa8b72aa092387282b419cc618d34f1b18（预算对比的共同基线仍为5da72ad）；候选experiment/sms-budget-8500ms独立保留，实际预算候选构建基线44bc07e99f00615eb86b797cdf063bfc3c6d20cd。最终文档提交SHA、远端一致性与干净工作区以最后核验和交付回复为准。不合并main、不改稳定分支/标签、不强推。
 
 ## 实测技术边界与未解决事项
 
@@ -46,11 +46,11 @@ URL清理为明确http(s)、www和常见裸域名规则，不承诺识别所有�
 - androidTest：同目录`app-debug-androidTest.apk`，只含测试，不是生产APK。
 - 8.5秒实验：`D:/Projects/SMSVoiceAssistant/app/build/stage1.1-artifacts/experiment-8500/app-debug.apk`，只用于候选测试，禁止当作已验收版。
 - 各目录metadata.json记录对应代码提交、预算及SHA256；APK/脱敏运行证据位于忽略的build目录，不进入Git。
-- 使用同签名install -r保留数据；不卸载、清数据、伪造SMS_RECEIVED、强停冒充自然回收或自动授予联系人。实验结束后先恢复8秒构建d18d312f…；三档人工反馈后已安装最终名称防护APK7729f62d…，从手机拉取实际APK哈希一致，设置保留。证据final-install-verification.json。
+- 使用同签名install -r保留数据；不卸载、清数据、伪造SMS_RECEIVED、强停冒充自然回收或自动授予联系人。实验结束后先恢复8秒构建d18d312f…，后安装名称防护7729f62d…；异步异常修复后安装最终3160606f…，从手机拉取实际APK哈希一致，设置保留。最新证据async-guard-install.json、async-guard-installed-verification.json；旧构建另存feature-8000-before-async-guard。
 - 构建：`./gradlew.bat testDebugUnitTest assembleDebug assembleDebugAndroidTest assembleRelease lintDebug lintRelease`。
 - 产物隔离：`python scripts/Verify-DebugSmsIsolation.py`；真实计时只读：`python scripts/Measure-SmsBudget.py --label <唯一标签>`。
 
-GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/commit/7bf1ee3ff95aa16d0baf3359da848cf9ef9b29c2)、[功能分支](https://github.com/mxy1021/sms-voice-assistant/tree/feature/v2-sms-speech-experience)、[8.5秒候选分支](https://github.com/mxy1021/sms-voice-assistant/tree/experiment/sms-budget-8500ms)。
+GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/commit/913bb1fa8b72aa092387282b419cc618d34f1b18)、[功能分支](https://github.com/mxy1021/sms-voice-assistant/tree/feature/v2-sms-speech-experience)、[8.5秒候选分支](https://github.com/mxy1021/sms-voice-assistant/tree/experiment/sms-budget-8500ms)。
 
 ## 修改文件清单（相对210a749）
 
@@ -96,8 +96,8 @@ GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/com
 
 ## 最终构建指纹与当前人工交接
 
-- 生产APK代码基线：7bf1ee3ff95aa16d0baf3359da848cf9ef9b29c2；后续增加测试APK受控MediaSession异常入口，编译通过但因ADB未连接尚未执行，生产APK不变。末次文档/测试提交另计。
-- 最终Debug APK SHA256：7729f62d2914ba36547f194eef6eb75350daf789a44b20d39ca16de6afc34b85。
-- 最终Release unsigned SHA256：1951a1ec497894c930b3757bdbaa37166eddb2553a572b1f4804f7fa28a73d3b。
+- 生产APK代码基线：913bb1fa8b72aa092387282b419cc618d34f1b18；新增的测试APK固定异常入口已实测，并据失败修复延迟播放异常逃逸，原失败和修复后成功均保留。末次文档提交另计。
+- 最终Debug APK SHA256：3160606f086104011b7680afae3f4b94512a4cf911a2e9d20e82d0dbfcef5c50。
+- 最终Release unsigned SHA256：430620911b74712de6732efe810e1e2baec604f8a2a24440f3299e7ef4dd740c。
 - 所有产物保留3 / 2.0.0-stage1，min/target/compile=33/34/36，包名/namespace/签名配置未修改。
 - 四组合及三档听感、Home/锁屏、停止和断连/撤权恢复已有本轮用户确认；静置/重启、长文本/队列及其他缺项继续按待验收表记录。正式验收仍等待用户，不把构建、受控fixture或部分按键成功替代完整验收。
