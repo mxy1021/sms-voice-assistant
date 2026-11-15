@@ -28,6 +28,17 @@ object OtpDetector { fun detect(body: String): Otp? = OtpExtractor.extract(body)
 
 data class SpeechDecision(val text: String?, val status: String)
 
+enum class SmsSpeechMode { IGNORE, SIMPLIFIED, FULL }
+
+/** Null means recognition failed or was ambiguous. Input/PCM budgets remain separate gates. */
+object SmsSpeechRules {
+    fun decide(otp: Otp?, otpOnlyEnabled: Boolean, otpSimplifyEnabled: Boolean): SmsSpeechMode = when {
+        otp == null && otpOnlyEnabled -> SmsSpeechMode.IGNORE
+        otp != null && otpSimplifyEnabled -> SmsSpeechMode.SIMPLIFIED
+        else -> SmsSpeechMode.FULL
+    }
+}
+
 object SpeechFormatter {
     const val MAX_INPUT_CHARS = 2048
     const val MAX_FULL_TEXT_CHARS = 80
@@ -36,9 +47,14 @@ object SpeechFormatter {
         if (!settings.announcingEnabled) return SpeechDecision(null, "已暂停，本条不播报")
         if (body.isBlank() || body.length > MAX_INPUT_CHARS)
             return SpeechDecision(null, "正文为空或超过输入上限，本条未播报")
-        if (!settings.otpOnlyEnabled) return full(body)
-        val otp = OtpDetector.detect(body) ?: return SpeechDecision(null, "未可靠识别验证码，本条忽略")
-        if (!settings.otpSimplifyEnabled) return full(body)
+        val otp = OtpDetector.detect(body)
+        return when (SmsSpeechRules.decide(otp, settings.otpOnlyEnabled, settings.otpSimplifyEnabled)) {
+            SmsSpeechMode.IGNORE -> SpeechDecision(null, "未可靠识别验证码，本条忽略")
+            SmsSpeechMode.FULL -> full(body)
+            SmsSpeechMode.SIMPLIFIED -> simplified(checkNotNull(otp))
+        }
+    }
+    private fun simplified(otp: Otp): SpeechDecision {
         val code = otp.code.map { ch ->
             if (ch in '0'..'9') "零一二三四五六七八九"[ch - '0'].toString()
             else "${if (ch.isLowerCase()) "小写" else "大写"}字母${ch.uppercaseChar()}"

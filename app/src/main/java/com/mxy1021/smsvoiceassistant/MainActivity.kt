@@ -166,14 +166,15 @@ class MainActivity : ComponentActivity() {
                 Toggle("仅播报验证码", "开启后，无法可靠识别的短信将忽略。", settings.otpOnlyEnabled) {
                     app.settings.setOtpOnly(it); app.session?.cancel()
                 }
-                Toggle("精简验证码播报", if (settings.otpOnlyEnabled) "只读平台和验证码；数字逐位朗读。" else "全文模式下不可操作，原设置已保留。",
-                    settings.otpSimplifyEnabled, settings.otpOnlyEnabled) {
+                Toggle("精简验证码播报", "识别到验证码时只读平台和验证码；关闭则读原文。此开关独立保存。",
+                    settings.otpSimplifyEnabled) {
                     app.settings.setSimplify(it); app.session?.cancel()
                 }
                 Text(when {
-                    !settings.otpOnlyEnabled -> "当前：所有新普通 SMS 全文播报"
-                    settings.otpSimplifyEnabled -> "当前：仅验证码，精简播报"
-                    else -> "当前：仅验证码，全文播报"
+                    settings.otpOnlyEnabled && settings.otpSimplifyEnabled -> "当前：验证码精简播报，普通短信忽略"
+                    settings.otpOnlyEnabled -> "当前：验证码全文播报，普通短信忽略"
+                    settings.otpSimplifyEnabled -> "当前：验证码精简播报，普通短信全文播报"
+                    else -> "当前：验证码和普通短信均全文播报"
                 }, style = MaterialTheme.typography.bodyMedium)
                 Text("全文最多80个字符，完整语音最多5秒，且须满足8秒总预算。超限整条拒绝并显示状态，不截断。较长全文暂不支持。",
                     style = MaterialTheme.typography.bodySmall)

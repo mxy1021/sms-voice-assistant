@@ -46,11 +46,9 @@ class AnnouncementRulesTest {
         assertEquals(body, SpeechFormatter.choose(body, enabled.copy(otpSimplifyEnabled = false)).text)
         assertNull(SpeechFormatter.choose("明天开会。", enabled.copy(otpSimplifyEnabled = false)).text)
     }
-    @Test fun allSmsModeAlwaysUsesUnmodifiedFullText() {
+    @Test fun allSmsModeWithoutSimplificationUsesUnmodifiedFullText() {
         listOf("明天14:30开会。", "验证码a0B1，请勿泄露。").forEach { text ->
-            listOf(true, false).forEach { simplify ->
-                assertEquals(text, SpeechFormatter.choose(text, enabled.copy(otpOnlyEnabled = false, otpSimplifyEnabled = simplify)).text)
-            }
+            assertEquals(text, SpeechFormatter.choose(text, enabled.copy(otpOnlyEnabled = false, otpSimplifyEnabled = false)).text)
         }
     }
     @Test fun disabledOverridesEveryRuleCombination() {

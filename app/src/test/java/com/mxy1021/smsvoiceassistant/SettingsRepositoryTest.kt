@@ -15,6 +15,50 @@ class MemorySettingsStore(val data: MutableMap<String, Any?> = mutableMapOf()) :
 }
 
 class SettingsRepositoryTest {
+    @Test fun v1UpgradeRetainsEveryRuleCombinationAndUnrelatedKeys() {
+        listOf(true, false).forEach { only -> listOf(true, false).forEach { simplify ->
+            val store = MemorySettingsStore(mutableMapOf("otpOnlyEnabled" to only,
+                "otpSimplifyEnabled" to simplify, "announcingEnabled" to true,
+                "bootRestoreEnabled" to true, "stage1BootCount" to 7, "settingsVersion" to 1,
+                "target" to "synthetic-v1-target", "focusMode" to 3, "setupCompleted" to true))
+            val original = store.data.toMap()
+            val restored = SettingsRepository(store, 7).snapshot()
+            assertEquals(only, restored.otpOnlyEnabled); assertEquals(simplify, restored.otpSimplifyEnabled)
+            assertTrue(restored.announcingEnabled); assertTrue(restored.bootRestoreEnabled)
+            assertTrue(restored.setupCompleted)
+            assertEquals("synthetic-v1-target", restored.selectedBluetoothDevice)
+            assertEquals(original, store.data)
+        } }
+    }
+    @Test fun rapidIndependentUpdatesPersistAndRestoreWithoutChangingDeviceOrRunState() {
+        val store = MemorySettingsStore()
+        val repo = SettingsRepository(store, 7)
+        repo.selectDevice("synthetic-v1-target"); repo.setEnabled(true); repo.setBootRestore(true)
+        repeat(100) { iteration ->
+            val only = iteration % 2 == 0
+            val simplify = iteration % 3 == 0
+            val savedSimplify = repo.snapshot().otpSimplifyEnabled
+            repo.setOtpOnly(only)
+            assertEquals(savedSimplify, repo.state.value.otpSimplifyEnabled)
+            repo.setSimplify(simplify)
+            assertEquals(only, repo.state.value.otpOnlyEnabled)
+            assertEquals(simplify, repo.state.value.otpSimplifyEnabled)
+            assertEquals(repo.snapshot(), SettingsRepository(store, 7).snapshot())
+        }
+        assertEquals("synthetic-v1-target", repo.snapshot().selectedBluetoothDevice)
+        assertTrue(repo.snapshot().announcingEnabled); assertTrue(repo.snapshot().bootRestoreEnabled)
+    }
+    @Test fun simplifyChangeWithFilterOffInvalidatesOldAudioWithoutRevivingIt() {
+        val repo = SettingsRepository(MemorySettingsStore(), 1)
+        repo.setEnabled(true); repo.setOtpOnly(false)
+        val permit = repo.permit(true)!!
+        repo.setSimplify(false)
+        assertFalse(repo.valid(permit))
+        repo.setSimplify(true)
+        assertFalse(repo.valid(permit))
+        assertNull(repo.withPermit(permit) { "unexpected PCM" })
+        assertNotNull(repo.permit(true))
+    }
     @Test fun freshDefaults() {
         val settings = SettingsRepository(MemorySettingsStore(), 1).snapshot()
         assertEquals(AppSettings(), settings)
@@ -26,15 +70,15 @@ class SettingsRepositoryTest {
         assertFalse(repo.snapshot().announcingEnabled)
         assertEquals(2, store.data["focusMode"]) // historical setting is not used by production
     }
-    @Test fun recreationAndRuleDependency() {
+    @Test fun recreationAndIndependentRules() {
         val store = MemorySettingsStore()
         val repo = SettingsRepository(store, 1)
         repo.setEnabled(true); repo.setSimplify(false); repo.setOtpOnly(false); repo.setSimplify(true)
         val restored = SettingsRepository(store, 1)
         assertTrue(restored.snapshot().announcingEnabled)
-        assertFalse(restored.snapshot().otpSimplifyEnabled)
+        assertTrue(restored.snapshot().otpSimplifyEnabled)
         restored.setOtpOnly(true)
-        assertFalse(restored.snapshot().otpSimplifyEnabled)
+        assertTrue(restored.snapshot().otpSimplifyEnabled)
     }
     @Test fun stopAndRestartInvalidateOldSmsAndManualPermits() {
         val repo = SettingsRepository(MemorySettingsStore(), 1)
