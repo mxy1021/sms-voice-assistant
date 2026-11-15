@@ -34,4 +34,4 @@ elapsedRealtime计时与回调到达时间分离。首次写入不是耳机实�
 
 [平台MediaSession.Callback](https://developer.android.com/reference/android/media/session/MediaSession.Callback)说明回调可来自系统最高优先会话的按键，也可由MediaController发送；因此“收到KeyEvent”本身不证明目标耳机来源。[KeyEvent.getDeviceId](https://developer.android.com/reference/android/view/KeyEvent#getDeviceId())的0可表示非物理设备，其余值为运行时任意编号；[InputDevice描述符](https://developer.android.com/reference/android/view/InputDevice#getDescriptor())也可能在不可区分的相同设备间重复。依据这些公开接口，当前探针不能把媒体按键直接认证为已保存蓝牙MAC，这是能力边界推断，不是本机KeyEvent失败记录。
 
-探针只记录代码/动作/重复次数及是否有输入设备/是否外部输入等脱敏标量，不记录设备ID、描述符、名称或地址。真实双击、目标来源、音乐控制权、Home/锁屏及释放仍须实测；未满足全部条件不正式实现。
+探针只记录代码/动作/重复次数及是否有输入设备/是否外部输入等脱敏标量，不记录设备ID、描述符、名称或地址。本机实际双击观察到127的DOWN/UP，inputDevicePresent=true、externalInput=false；这不能认证蓝牙来源。音乐及锁屏音乐两轮中，临时映射127的UP只取消本APP，用户确认语音立即停止、音乐继续不跳曲，MediaSession均释放。无音乐轮只记录按键，不声称停止验证。Home、其他按键/其他设备影响仍未验证，未满足全部条件，不正式实现。
