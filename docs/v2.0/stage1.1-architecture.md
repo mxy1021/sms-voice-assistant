@@ -29,3 +29,9 @@ elapsedRealtime计时与回调到达时间分离。首次写入不是耳机实�
 活动及待播事件的接收截止时间独立保留，最多当前＋5条；消息终结后释放。诊断环被突发新事件淘汰不会将待播语音预算重置。联系人查询同时最多一项；超时查询尚未退出时，后续查询降级正文，避免累积查询工作线程。
 
 最终名称防护补充：联系人显示名中累计含7位及以上数字时，不论是否用点号、空格或特殊空白分隔，保守降级正文，避免把备注内夹带的号码作为姓名读出；相应负例纳入同一93项JVM测试。
+
+## 媒体按键技术核查
+
+[平台MediaSession.Callback](https://developer.android.com/reference/android/media/session/MediaSession.Callback)说明回调可来自系统最高优先会话的按键，也可由MediaController发送；因此“收到KeyEvent”本身不证明目标耳机来源。[KeyEvent.getDeviceId](https://developer.android.com/reference/android/view/KeyEvent#getDeviceId())的0可表示非物理设备，其余值为运行时任意编号；[InputDevice描述符](https://developer.android.com/reference/android/view/InputDevice#getDescriptor())也可能在不可区分的相同设备间重复。依据这些公开接口，当前探针不能把媒体按键直接认证为已保存蓝牙MAC，这是能力边界推断，不是本机KeyEvent失败记录。
+
+探针只记录代码/动作/重复次数及是否有输入设备/是否外部输入等脱敏标量，不记录设备ID、描述符、名称或地址。真实双击、目标来源、音乐控制权、Home/锁屏及释放仍须实测；未满足全部条件不正式实现。
