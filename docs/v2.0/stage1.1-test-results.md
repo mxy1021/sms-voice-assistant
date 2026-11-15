@@ -189,3 +189,16 @@
 该修复后93/93 JVM、19/19设备功能/规则/队列回归均PASS，0失败0跳过；Debug/Release/androidTest构建PASS，Lint仍0错误16/15警告，产物隔离4权限0Service PASS。证据async-playback-guard-build.log、headset-probe-controlled-exception-fixed.txt、instrumentation-async-guard.txt。用户为永久焦点丢失回归主动暂停音乐，测试完成后gain恢复原6dB，原运行/两个规则/开机/耳机配置保留。
 
 修复APK同签名install -r并从手机拉取核验：Debug SHA256=3160606f086104011b7680afae3f4b94512a4cf911a2e9d20e82d0dbfcef5c50；Release unsigned=430620911b74712de6732efe810e1e2baec604f8a2a24440f3299e7ef4dd740c。旧7729f62d…构建及元数据已另存feature-8000-before-async-guard，不覆盖历史实验和人工证据；SMS-000088～107属于修复前构建，修复后的真实短信另记。
+
+## 修复后真实SMS：混合码与整条拒绝
+
+| 事件 | API结果与精确finish | 用户反馈 / 证据边界 |
+|---|---|---|
+| SMS-000108、109 | 均合成5507ms / 264320字节，写入0；finish1831/1832ms | 用户确认A12345全文只有短信铃声、没有语音；至少对应本轮该样本，不能把另一次同样时长记录擅自映射不同正文。已识别混合码但超5秒，整条拒绝；不记混合码完整朗读PASS |
+| SMS-000110 | REJECTED，finish6ms；片段无效/发送方时间不一致或输入超限的统一拼接拒绝原因，未启动音频 | 用户81字中文样本整条静默；未读取PDU内容进一步定位，不能将其记为80字符门禁通过，也不放宽既有防混发约束 |
+| SMS-000111 | COMPLETED，PCM4387ms / 210560字节全量；finish6409ms | 用户确认A123字母数字完整正确、手机无语音；本轮真实语音最大完整PCM提高至已观测4387ms，正式上限仍5000ms |
+| SMS-000112 | 解析组合成功后IGNORED，明确原因“全文超过80字符安全上限”；finish43ms，无TTS/PCM | 用户81个英文字母整条静默、没有前半段；本轮真实80字符门禁与不截断证据PASS |
+
+API分类INCOMPLETE不等于已部分播放：108/109均0字节；112沿用规则不播报的IGNORED分类，实际原因是全文超限。所有时序均onReceive→实际PendingResult.finish返回，不是系统分发周期。脱敏证据async-guard-long-confirmed.json、async-guard-long-reasons.json、async-guard-char-limit-confirmed.json、sms-112-char-limit-reason.json。
+
+截至112，新功能真实SMS共25条：16完整、3规则/全文门禁忽略、2主动安全取消、2PCM超限零写入、1拼接拒绝、1撤权后终结不可观测。长混合码不保证播报成功；保持原大写/小写字母表达和完整优先，没有为了样本通过修改PCM或预算。
