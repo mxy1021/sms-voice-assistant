@@ -30,6 +30,8 @@ elapsedRealtime计时与回调到达时间分离。首次写入不是耳机实�
 
 活动及待播事件的接收截止时间独立保留，最多当前＋5条；消息终结后释放。诊断环被突发新事件淘汰不会将待播语音预算重置。联系人查询同时最多一项；超时查询尚未退出时，后续查询降级正文，避免累积查询工作线程。
 
+平台投递边界：核查时[AOSP主线InboundSmsHandler的WaitingState](https://android.googlesource.com/platform/frameworks/opt/telephony/+/master/src/java/com/android/internal/telephony/InboundSmsHandler.java)会将下一次EVENT_BROADCAST_SMS阶段延后至当前广播完成。它能解释串行投递的可能性，但不是vivo固件实际实现的证明。本机两轮后一条onReceive分别在前条finish后145/123ms才发生，均没有应用内待播记录。队列只能排序已经进入APP的消息，不能排序尚未由系统交付的SMS；不得用受控协调器测试承诺真实SMS一定能重排，也不能用该机制解释未观测普通短信的原因。
+
 最终名称防护补充：联系人显示名中累计含7位及以上数字时，不论是否用点号、空格或特殊空白分隔，保守降级正文，避免把备注内夹带的号码作为姓名读出；相应负例纳入同一93项JVM测试。
 
 ## 媒体按键技术核查
