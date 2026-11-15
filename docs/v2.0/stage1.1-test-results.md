@@ -1,5 +1,115 @@
 # V2.0 阶段1.1测试结果
 
+## 正式验收收尾：当前结论（2026-11-15）
+
+本节优先于下方第一轮开发交付快照；旧失败及数据均保留。本轮基线8d8608e，本轮清理修复代码d7283215b306a49e3cd8a1830d745610cd725d65。仅修改feature/v2-sms-speech-experience；未修改8.5秒实验、main、阶段1稳定基线、版本/签名/包名/SDK。
+
+| 项目 | 本轮结论 |
+|---|---|
+| 正式8秒 | FORMAL_RETAINED；安全前置清理样本通过，绝对物理终结上界仍NOT_PROVEN |
+| 8.5秒 | FAILED_NOT_ADOPTED；旧8510ms失败保留，不重做实验 |
+| PCM/字符扩容及5.1/5.2秒实验 | DEFERRED_OUT_OF_SCOPE，不属于本轮强制验收 |
+| 耳机双击正式功能 | DEFERRED_OUT_OF_SCOPE；只保留旧测试探针，无正式UI/接收路径集成 |
+| SMS-000106 | NOT_MEASURABLE；进程权限变更退出证据存在，应用清理/finish证据不能恢复 |
+| 四组合8格 | 事件映射PASS，见下表；未重复发送 |
+| 真实URL | MANUAL_BLOCKED；用户仅重试一条后确认仍被运营商拦截 |
+| 真实SMS优先重排 | BLOCKED；保留算法/规则，不把模拟或串行播报当真实重排 |
+
+### 8秒边界：原始缺陷与最小修复
+
+原8004ms超时、8014ms资源释放来自budget-8000-exact-release.json的精确测点；8016ms才是观察线程时间。因此8014ms不是观察误差。原会话到8000ms才开始同步清理，时间未包含在截止前。
+
+所有正式常量保留8000ms、5000ms、1MiB、80 UTF-16、1800ms；既有路由/清理预留仍700ms。新增的是本会话一次性清理检查：从原接收时间推导7300ms，仅在未播放或没有持有焦点的暂停状态终结等待。原PCM准入/恢复门禁已经要求保留700ms，这些状态到7300ms后不能再合法开启/恢复正时长PCM。**正在持有焦点的正常播放不被该检查终止**，仍保留8000ms最终看门狗，未缩短正常语音为7.3秒。
+
+终结标记提前到清理入口；跨线程cancel统一投递主线程，重复终结直接返回。新增TTS取消、AudioTrack停止/释放、其他会话资源清理测点；无事件ID的PDU解析失败也记录真实finish调用/返回。权限依赖边界默认仍调用平台checkSelfPermission，受控拒绝只在测试APK注入，无产品开关。
+
+本轮T0～T8定义采用用户的新要求：T0=onReceive入口（旧章节T0=Application入口保持历史原义）。各值相对该次入口，单位ms：
+
+| 节点 | 慢初始化私有测试广播 | 暂停私有测试广播 | 完整5秒PCM私有测试广播 | 受控拒权复测 | 真实SMS-000123 |
+|---|---:|---:|---:|---:|---:|
+| T0入口 | 0 | 0 | 0 | 0 | 0 |
+| T1硬8000ms超时回调 | 未触发 | 未触发 | 未触发 | 未触发 | 未触发 |
+| 一次性清理检查 / 实际前置触发 | 7309 / 7313 | 7306 / 7313 | 7304 / 未触发 | 未到窗口 | 未到窗口 |
+| T2开始取消TTS | 7320 | 7357 | 7577 | 2031 | 3378 |
+| T3开始AudioTrack停止 | 未创建 | 7325 | 7553 | 2011 | 3356 |
+| T4 AudioTrack释放返回 | 未创建 | 7348 | 7570 | 2023 | 3370 |
+| T5 AudioFocus释放返回 | 未申请 | 7355 | 7576 | 2029 | 3376 |
+| T6其他会话资源清理完成 | **7331** | **7364** | **7587** | **2035** | **3384** |
+| T7调用PendingResult.finish | **7339** | **7369** | **7591** | **2041** | **3389** |
+| T8 finish返回 | **7339** | **7369** | **7591** | **2041** | **3389** |
+
+T2～T5是资源类别标签，不是时间排序：实现先停止并释放AudioTrack，再释放焦点，再停止/关闭TTS，故TTS时间晚于轨道/焦点。未创建对象不伪造释放时间。T6是清理API步骤完成；受控拒权和并发取消补查同时确认工作线程在finish前已terminated，100ms后也无残留。
+
+前四列通过测试APK动态注册的私有**有序普通测试广播**执行，确实获得Android PendingResult并调用finish；其source=DEBUG_SIMULATION、broadcast=PRIVATE_TEST_ACTION_NOT_SMS。人工静音PCM与受控状态替身均明确标记，绝不是系统SMS_RECEIVED。完整5秒样本写满160000字节，7304ms检查未取消，7591ms返回finish，证明没有为了数字好看而截断该正常样本。慢初始化延迟回调到9500ms，等待至10200ms仍无旧会话复活。暂停样本用真实通知属性焦点竞争产生-3。
+
+真实123由受保护SMS_RECEIVED进入，PCM1467ms/70400字节全量，用户确认语音完整、手机无语音；实际appVisible=false、interactive=true、keyguard=false，**不冒称锁屏新复测**。本条无预算超时，T0→T6=3384、T0→T7/T8=3389ms。系统真正分发起点仍不可观测。不能以这些样本宣称任意CPU冻结/主线程阻塞下均严格≤8000ms；活动音频最终看门狗仍在8000ms启动清理，异常停滞的绝对终结上界未证明。
+
+### 14条终结路径审查
+
+| 路径 | 代码/证据与边界 |
+|---|---|
+| 1正常完整播放 | marker→end→结果回调→Receiver.finish；本轮5秒私有广播及真实123，均先清理再finish |
+| 2总预算超时 | 8000ms看门狗保留；未播放/暂停先使用既有预留清理；原8014ms失败不删除，不能承诺硬回调无调度晚到 |
+| 3 PCM超限/写入超时 | PcmBudget整条准入、写入循环elapsed门禁；旧108/109零写入，当前针对性单测覆盖正式边界；未做扩容实验 |
+| 4 TTS初始化失败 | 本轮受控ERROR：T6=64ms，finish调用69/返回70ms，一次stop/shutdown |
+| 5 TTS合成失败 | 本轮受控onError：T6=74ms，finish78ms，零语音写入 |
+| 6焦点申请失败 | 本轮受控拒绝：T6=1826ms，finish1831ms，未创建轨道；替身不冒称系统实际拒绝 |
+| 7焦点永久丢失 | SpeechExperienceDeviceTest实际系统LOSS，终止/效果释放PASS |
+| 8焦点临时丢失 | 本轮真实-3/GAIN恢复完整；停止/暂停到预留窗口后清理、不复活，Focus封装3场景API通过 |
+| 9蓝牙断开 | 广播/输出移除/路由变化→同一end；104/105用户历史实测保留，本轮不重复断连 |
+| 10蓝牙撤权 | 活进程拒权边界→同一end，本轮受控拒权PASS；106系统终止进程仍不可测 |
+| 11关闭总开关 | setAnnouncingEnabled(false)→cancelSpeechWork；旧103真实PASS，本轮固定Focus.stop及并发cancel验证同一清理 |
+| 12用户停止 | APP内“取消本次播报”→cancelSpeechWork；系统强停属于进程终止，无法保证Java finally/finish，未强停冒充此路径 |
+| 13异常退出 | play入口捕获初始化Exception→end，本轮受控异步异常T6=1832/finish1835ms；OOM/外部kill等不承诺Java清理执行 |
+| 14重复/并发终结 | 两线程各4次cancel：回调与finish均1次、轨道STATE_UNINITIALIZED、TTS stop/shutdown与焦点释放各1次、旧会话不复活 |
+
+实际AudioTrack、焦点、LoudnessEnhancer及TTS对象被使用并核对释放计数/状态；这是所测路径的无残留证据，不扩张为所有系统原生故障都可保证释放。Receiver、Coordinator与Session各有一次性终结保护，正常回调链只有在Session清理完成之后才触达PendingResult.finish。没有在音频资源释放前提前finish以规避预算。
+
+### SMS-000106历史核查
+
+feature-8000-safety-read.json保留106入口、合成与首次写入，缺少资源终结和finish；不存在可补写的T6/T7/T8。cold-sms-107.json记录下一次Application入口、上一退出原因码8，以及系统am_proc_start原因broadcast/SmsReceiver、非instrumentation。官方[ApplicationExitInfo.REASON_PERMISSION_CHANGE](https://developer.android.com/reference/android/app/ApplicationExitInfo#REASON_PERMISSION_CHANGE)将8定义为运行时权限变更导致进程被杀。结合用户撤蓝牙权限操作，支持权限变更终止的判断，不等于已观察Java异常栈或finally。
+
+SmsReceiver没有能在进程死亡后继续执行的finally；正常路径通过Coordinator结果回调finish，catch只处理可捕获异常；Coordinator的finally只释放在进程存活时的截止时间记录。外部进程终止不保证这些代码执行。未发现goAsync之后正常分支无意提前return且永久遗失回调的路径；排队有期限、异步失败均走终结。结论保持NOT_MEASURABLE，不称历史finish成功或应用提前退出导致的既定缺陷。
+
+本轮受控拒权只把SpeechDependencies的权限读数置false，Android实际蓝牙权限仍为GRANTED、没有杀进程；已播放3200字节后安全取消，原生轨道已释放、焦点与TTS各关闭一次、工作线程在finish前退出，回调/finish各1次。它验证当前存活进程的拒权清理，不替代106历史，也不冒称真实系统撤权生命周期。
+
+### 四组合8个真实SMS证据映射（历史提取，无重测）
+
+| 组合（仅码/精简） | 类型 | 真实SMS ID | 预期 | 原始听感反馈 | 结论 |
+|---|---|---|---|---|---|
+| A 开/开 | 验证码 | SMS-000091 | 精简 | U3：“精简/全文正确…无手机语音” | PASS，finish4984ms |
+| A 开/开 | 普通 | SMS-000092 | 静默 | U3：“两条普通短信都静默” | PASS，IGNORED，8ms |
+| B 开/关 | 验证码 | SMS-000093 | 联系人＋全文 | U3：“精简/全文正确…无手机语音” | PASS，finish4817ms |
+| B 开/关 | 普通 | SMS-000094 | 静默 | U3：“两条普通短信都静默” | PASS，IGNORED，10ms |
+| C 关/开 | 验证码 | SMS-000088（89前导零补充） | 精简 | U1：“逐位正确、完整、手机没有语音” | PASS，5035ms |
+| C 关/开 | 普通 | SMS-000097（98/99音量补充） | 联系人＋全文 | U4：“各档清楚…音乐降低后恢复、手机无语音” | PASS，4254ms |
+| D 关/关 | 验证码 | SMS-000100 | 联系人＋全文，码逐位 | U5：“全文（含联系人）且验证码逐位完整、无手机语音” | PASS，4815ms |
+| D 关/关 | 普通 | SMS-000090 | 联系人＋全文 | U2：不带链接“可以读出正确联系人，无手机语音” | PASS，4694ms |
+
+U1/U2为会话请求call_5527d0c4cf3e414091104796f175b89c的第0/1项用户回复；U3为call_1c7b1b6d2f9747128764c47ba16b3170第0项；U4/U5为call_c9e31f6f5cda4d69ac98a9915a520e30第0/1项。U3、U4是按原问题目标取得的批次听感，没有捏造逐字转录或姓名。联系人精确匹配另有90、96、100的明确反馈；未存号码121及联系人撤权95/恢复96独立保留。开关配置来自用户操作记录及当轮UI/设置核对，不臆造旧日志不存在的逐事件配置快照。
+
+事件API文件：88/89见feature-8000-first-read.json及second-read.json；90～94见feature-8000-matrix-read.json；97～100见feature-8000-volume-confirmed.json。早期88的JSON尚无disposition字段，但完整PCM全量写入、finish与U1反馈均存在，不补写原文件。8格均有实际编号，无需编造或补发。
+
+### URL覆盖与本轮真实发送
+
+SpeechExperienceTest.linksAndMeaningfulInformation覆盖https、www、裸域名、多链接、中文标点、中间链接、查询/跟踪参数、验证码、金额、日期时间、取件码、订单和地址保护；本轮补上明确http输入断言并通过。原字符串不变亦有断言。用户仅按本轮要求尝试一次指定合法URL短信，回复“仍被拦截”；因此真实过滤结论为MANUAL_BLOCKED，不升级PASS，不伪造广播，不以测试替身充数。
+
+替代步骤：在本机执行`./gradlew.bat testDebugUnitTest --tests com.mxy1021.smsvoiceassistant.SpeechExperienceTest`可复查清理副本断言，仅属自动化逻辑证据。以后如合法真实SMS通道可达，用短正文“晚上七点见。https://example.com/a”单次测试，保持仅码/精简均关闭、指定耳机连接；应只读联系人（若匹配）＋短正文、无URL/手机语音，读取新的REAL_SMS编号及实际finish，再由用户确认。不要改用RCS/伪造SMS广播或大量反复发送。
+
+### 自动化、异常与产物状态
+
+本轮针对性27/27 JVM通过，覆盖SmsSafetyWindowTest、SpeechExperienceTest、SpeechFocusGateTest、SpeechStartPolicyTest；不把旧全量93项冒称本轮全量执行。Debug/Release/androidTest构建通过，Lint0错误16/15警告，合并Manifest与APK隔离PASS，4权限0Service，无版本/包名/SDK/签名变化。
+
+首轮相关设备16方法：9个新终结方法全部PASS，原7个音频/权限方法中6通过、0dB方法1失败（系统媒体读数40→100）。用户明确没有手动调整；原closeout-instrumentation.txt保留。源码没有全局setStreamVolume/adjustStreamVolume调用，仅旧端口刷新对自身静音轨道setVolume(0f)。留存AudioService音量事件中没有本APP调用者。AOSP[getStreamVolume按设备取值](https://android.googlesource.com/platform/frameworks/base/+/master/services/core/java/com/android/server/audio/AudioService.java)说明端点变化可能影响读数，但缺少失败瞬间的端点快照，不能把它断言为本次根因。
+
+补充工作线程观测后只重跑并发取消、受控拒权及失败0dB三项，3/3 PASS；前两项工作线程在finish前已terminated且等待后仍无残留；0dB复测streamVolumeUnchanged=true。首次变化仍记OPEN_OBSERVATION，未解释的失败不删除、不直接改写为PASS；没有修改全局音量去“恢复”数字。当前Focus封装1方法的实际-3/GAIN恢复、停止、预留清理3场景API断言PASS，听感不冒称已人工验证。
+
+证据：closeout-build.log、closeout-instrumentation.txt、closeout-targeted-rerun.txt、closeout-focus.txt、closeout-real-sms.json、closeout-volume-audit.json、closeout-volume-device-indices.json。测试包一次INSTALL_FAILED_ABORTED和随后等待本机授权均实际发生；用户授权后安装Success，不绕过保护、不卸载/清数据。
+
+本轮只新增可追踪真实样本123；旧88～121的34个归档事件不重测，不用编号跨度推算全部收信数量。新样本与35个已归档真实事件统计对应，未保存短信号码、联系人或正文。正式结论仍NOT_ACCEPTED；队列BLOCKED、URL MANUAL_BLOCKED及音量观察项供用户决定，暂缓项不再作为强制验收缺口。
+
+## 第一轮开发与交付历史（保留原始快照）
+
 日期：2026-11-15。**当前：93项JVM、19项设备功能回归、1项受控MediaSession异常释放及1个Focus封装方法的3个实际焦点场景API断言通过；8/8.5秒各7项受控守卫通过，但8.5秒精确资源释放8510ms，严格预算FAIL，不采用、不扩容，最终8秒APK已安装并哈希核验。** 四组合8格、5位/前导零/短混合码、联系人及撤权恢复、未存号码仅正文、三档音乐听感、Home/锁屏、停止/断连/撤蓝牙恢复、真正连续三条、重启不开APP及断USB锁屏静置约10分钟收信均由用户确认。34条真实事件中25完整；静置120精确finish4356ms，未存号码121为3596ms。耳机双击不作为正式功能，真实P0重排未触发，链接受阻，其他未测项及正式人工验收保留。以下早期快照和失败记录保留，以文首及后续最新结论为准。
 
 ## 原安装版本8秒基线（未安装或改动手机代码前）

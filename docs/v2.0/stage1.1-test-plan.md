@@ -1,5 +1,20 @@
 # V2.0 阶段1.1测试计划
 
+## 正式验收收尾补充（2026-11-15，优先于旧实验计划）
+
+用户已确认PCM/字符扩容、5.1/5.2秒实验及耳机双击正式功能为DEFERRED_OUT_OF_SCOPE；8.5秒FAILED_NOT_ADOPTED，不再要求其旧B01～B12全套作为本轮强制门槛。正式常量8000/5000ms、1MiB、80 UTF-16、1800ms及既有700ms余量不变。
+
+- 预算修复：针对性运行SmsSafetyWindowTest、SpeechExperienceTest、SpeechFocusGateTest、SpeechStartPolicyTest；验证预留窗口仅取消未播放/暂停，不取消活动正常语音。
+- SessionCloseoutDeviceTest使用测试APK动态私有有序普通广播，绝不发送SMS_RECEIVED；source=DEBUG_SIMULATION。测真实PendingResult但只代表普通测试广播，人工静音PCM/受控权限读数不能冒称真实SMS。
+- 新9方法覆盖慢初始化/晚回调、5秒PCM跨预留窗口完整、活进程拒权、两线程重复取消、初始化/合成/焦点失败、异步异常及暂停预留清理；分别核对TTS、轨道、焦点、其他资源和finish调用/返回，完成/finish各1次。并发/拒权另核对线程退出。
+- 使用1条新真实SMS验证当前构建的正常清理→finish顺序，不能据此宣称超时真实广播全生命周期都已通过。旧四组合8格从用户记录和88/90/91～94/97/100映射，不重复发送。
+- 真实URL只尝试1次，若仍拦截记MANUAL_BLOCKED。自动化替代命令：`./gradlew.bat testDebugUnitTest --tests com.mxy1021.smsvoiceassistant.SpeechExperienceTest`，仅逻辑证据。未来合法通道可达时发送“晚上七点见。https://example.com/a”，两规则均关、原耳机连接，确认仅正文/联系人、无URL/手机语音并保存脱敏真实事件时序。
+- 队列审查以平台源码、Receiver/Coordinator/WaitingQueue/finish时机及117～119入口为证据；不能重排系统未交付消息时记BLOCKED，提交最小可行范围/架构选项供用户决定，不增加Service。
+- 106历史退出原因与缺失终结数据独立保留NOT_MEASURABLE。受控权限测试不实际撤销系统权限，不强停应用，不补写106。
+- 任何新增失败（包括媒体音量读数异常）保留原输出，仅对失败或新增观测做针对性复测；不以最后一次通过删除第一次失败。
+
+以下为主体开发时原计划，保留历史，不将暂缓项重新列为强制缺口。
+
 ## 自动化
 
 - F1：4/5/6/8位、00981、A12345、大小写、中文/英文模板；金额、日期、手机、订单、普通编号、歧义与不支持长度负例；仅码span替换。
