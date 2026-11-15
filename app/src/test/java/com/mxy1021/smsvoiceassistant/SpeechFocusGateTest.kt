@@ -2,6 +2,7 @@ package com.mxy1021.smsvoiceassistant
 
 import com.mxy1021.smsvoiceassistant.audio.*
 import com.mxy1021.smsvoiceassistant.sms.PcmBudget
+import com.mxy1021.smsvoiceassistant.sms.SmsSafetyWindow
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -34,7 +35,9 @@ class SpeechFocusGateTest {
     }
     @Test fun remainingBudgetIncludesInterruptionAndUnplayedAudio() {
         assertTrue(PcmBudget.remainingFits(3000, 2000))
-        assertFalse(PcmBudget.remainingFits(3000, 4300))
+        val deadline = SmsSafetyWindow.SESSION_BUDGET_MS - 3000 - PcmBudget.ROUTE_AND_CLEANUP_MS
+        assertFalse(PcmBudget.remainingFits(3000, deadline))
+        assertTrue(PcmBudget.remainingFits(3000, deadline - 1))
         assertFalse(PcmBudget.remainingFits(1000, 7000))
         assertFalse(PcmBudget.remainingFits(-1, 100))
         assertTrue(PcmBudget.remainingFits(5100, 1000)) // Includes the silent route probe.
