@@ -7,3 +7,5 @@
 5. 双击：仅测试APK内临时MediaSession验证目标耳机KeyEvent，不正式接入；没有音乐/音乐/Home/锁屏及资源释放均需证据。不可可靠分辨来源或会影响音乐即判不满足，不添加UI或常驻监听。
 6. 验证：JVM、设备instrumentation、Debug/Release/androidTest、Lint、合并Manifest与测试隔离；实短信和人工听感独立统计。升级使用同签名install -r，不卸载或清数据，不自动授予联系人。
 7. 文档与Git：七份stage1.1独立文档；提交前核对diff和staged清单，排除APK/日志/私有信息；推送feature，核实远端SHA。正式验收等用户真实SMS及后台听感。
+
+预算本轮结论：同样本受控测试发现8.5秒T11资源释放8510ms，严格内部预算FAIL，停止采用及扩容。已恢复并哈希核验8秒APK。今后如研究提前清理，必须另建共同基线后重新做单变量对比，本轮不混入该变化。

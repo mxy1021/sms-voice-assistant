@@ -51,7 +51,10 @@ def main():
         def integer(field):
             values = [e.get("value") for e in rows if e.get("field") == field]
             return int(values[-1]) if values and re.fullmatch(r"[0-9]+", str(values[-1])) else None
+        dispositions = [e.get("value") for e in rows if e.get("field") == "业务结果" and
+                        e.get("value") in ("REJECTED", "IGNORED", "BUSY", "COMPLETED", "INCOMPLETE")]
         events.append(dict(id=ident, source="REAL_SMS", pointsElapsedMs=points,
+            disposition=dispositions[-1] if dispositions else "UNOBSERVED",
             foregroundBroadcast=flags[-1]["value"] == "true" if flags else None,
             systemDispatchElapsedMs=None, systemDispatchToFinishMs=None,
             systemDispatchObservation="UNAVAILABLE: no exact system_server dispatch timestamp",
