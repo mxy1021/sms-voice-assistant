@@ -126,3 +126,5 @@
 已保留budget-8500-instrumentation.txt、budget-8500-exact-release.json；已同签名install -r恢复正式8秒应用及测试包。拉取手机实际安装APK计算SHA256，与正式8秒产物相同：d18d312f43c77543349192fd156b37f04c48ead37aa1776e4741560d3daa0fb6。不是仅凭相同versionName猜测预算。恢复后设置快照另存after-budget-restored.json，未卸载或清数据。
 
 最终代码审查新增名称内点号/不间断空格分隔长号码负例，纯文本策略保守降级；完整JVM仍93/93，Debug/Release/androidTest及Lint重新通过。此修正不改变预算、PCM、路由或音量实现；8.5秒已失败的实验数据仍按原共同基线5da72ad/候选44bc07e保存，不冒称为此后构建的实测。
+
+最终人工交接：三档0/3/6dB（前台/Home/锁屏音乐）及C普通/D验证码的测试请求已发出，尚无用户反馈或对应新事件，保持NOT_RUN/待反馈。名称防护最终Debug产物7729f62d…尚未覆盖当前手机的8秒恢复构建d18d312f…，避免打断该轮操作；待反馈后完成更新及后续耳机实际按键/后台回归。
