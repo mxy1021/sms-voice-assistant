@@ -10,6 +10,7 @@ EXPECTED = {"android.permission." + name for name in ("RECEIVE_SMS", "BLUETOOTH_
 MARKERS = (b"SmsBudgetDeviceTest", b"SVA_BUDGET", b"SpeechExperienceDeviceTest", b"SmsQueueDeviceTest", b"HeadsetMediaProbeTest", b"SVA_MEDIA_KEY", b"DebugSmsInjectionTest", b"ForegroundBluetoothRefreshTest", b"ColdStartInitializationTest", b"IndependentSmsRulesDeviceTest", b"DebugSmsFixtures", b"SVA_DEBUG_RESULT", b"SVA_DEBUG_READY",
            "【测试平台】验证码：".encode("utf-8"), "这是一条用于检查完整语音播放时间上限".encode("utf-8"))
 MARKERS += (b"SessionCloseoutDeviceTest", b"SVA_CLOSEOUT")
+MARKERS += (b"LoudnessAuditDeviceTest", b"SVA_LOUDNESS_AUDIT")
 FAULT_MARKERS = (b"ControlledSpeechDependencies", b"ObservedFailureTts", b"ControlledFailure")
 
 
