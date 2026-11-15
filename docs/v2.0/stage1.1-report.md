@@ -1,5 +1,115 @@
 # V2.0 阶段1.1技术与交付报告
 
+本轮最终源码：[commit fbd183b71f1eec74a84e00976256044c579a367c](https://github.com/mxy1021/sms-voice-assistant/commit/fbd183b71f1eec74a84e00976256044c579a367c)；分支feature/v2-sms-speech-experience。文档验收结论为READY_FOR_USER_ACCEPTANCE，尚未正式关闭。
+
+## 最终功能完善交付（2026-11-16，当前优先）
+
+当前结论 **READY_FOR_USER_ACCEPTANCE**：四档响度、显示模式、最终重启后台真实SMS及自动化强制项已具备证据，等待用户正式确认关闭阶段1.1；不自行宣布已验收。
+
+用户已确认的范围：正式0/+3/+6/+9dB，七档试验后的12/15/18由用户明确移除；三种主题；8秒APP内部预算；只保证APP内队列排序；真实URL MANUAL_BLOCKED及106 NOT_MEASURABLE是已接受边界；40→100为用户本人手调、CLOSED_BY_USER_CLARIFICATION。不得再把这些已确认决定列为待选问题。原8014ms、音量首轮失败/复测及上游串行记录均保留。8.5秒FAILED_NOT_ADOPTED，扩容/耳机双击正式功能DEFERRED_OUT_OF_SCOPE。
+
+音频审计先提交5434df961515e87a346559602840a27fd2e12963，之后才修改音频。原0dB有效语音约−20dBFS而峰值仍有6～8dB余量，没有APP重复缩放或额外轨道衰减证据；音乐没有额外降低源PCM。用户原版无/有音乐均认为小，duck正常。此为已证实贡献因素，不推断耳机端唯一根因，不宣称测得SPL。
+
+最终局部处理：原worker内能量门控RMS标准化（−12dBFS目标、最大+9dB），合并用户0/3/6/9dB，声道联动平滑峰值限制及4倍插值估计兜底；取代LoudnessEnhancer，避免保护后再叠加硬件增益。20ms门控、反向5ms/前向50ms减益包络、样本−2dBFS/插值估计−1.2dBFS；不是整数硬削顶，无独立大型压缩框架。输入/输出样本数、PCM上限及完整播放原则不变，耗时进入原预算，门禁不足整条拒绝。
+
+最终0dB三句有效RMS约−12.7～−12.3dBFS，原−20dBFS约提升8dB；用户确认音量合适、自然，无明显压缩感/失真/爆音/手机语音。四档无/有音乐用户均确认清楚完整，音乐降低后恢复；全部客观满幅0、媒体音量60→60。名义增益不等于保护后的等间隔响度，个别档位可不单调，保留测量。完整前后表、DC/crest/静音/峰值估计口径见[专项审计](audio-loudness-audit.md)。
+
+显示模式沿用Compose/Material3：普通/深色/跟随系统，默认系统；立即更新并保存新displayMode键，语音generation不变。真实控件、背景像素、系统模式切换、Activity重建/偏好恢复通过；另已取得用户人工视觉、APP关闭重开及手机正常重启持久化确认。
+
+| 交付检查 | 当前结果 |
+|---|---|
+| 六项原功能 | F1/F2联系人/F3保留历史PASS；URL自动化PASS、真实MANUAL_BLOCKED；F5改四档PCM处理并通过固定句听感；F4扩容/F6正式双击暂缓，8.5失败不采用 |
+| 当前测试 | JVM108/108；音频/终结设备18/18；主题/四档UI2/2＋最大PCM1/1；音乐四档固定语音1方法4会话；结果与历史失败分别归档 |
+| 预算/冷启动 | 8000/5000/1MiB/80/1800/700均未变；最大人工PCM处理432ms，仍须动态剩余预算门禁。不可控系统冻结/杀进程不承诺物理上界；本轮Application入口未保留，未冒称新冷启动测量 |
+| Release/Debug/Lint | Debug/Release unsigned/androidTest成功；Lint0错、Debug16/Release15历史警告 |
+| 架构/隐私 | 无新增权限/Service/FGS/WorkManager/轮询/常驻媒体会话；不保存真实短信/联系人/号码/音频；不联网；无系统音量写入或扬声器回退 |
+| Manifest/版本 | 原4权限，仅READ_CONTACTS可选；版本3/2.0.0-stage1，33/34/36及包名/namespace/签名配置不变；隔离脚本PASS |
+| 新人工与真实SMS | 三主题/APP重开/手机重启持久化PASS；SMS-000124 Home与125锁屏断USB，均完整含联系人/音乐降低恢复/手机无语音，finish3667/3644ms |
+
+### 音频/主题构建真实SMS与手机重启（2026-11-16）
+
+用户确认三种主题文字/控件清楚、立即切换；选深色/+3后APP关闭重开保留。正常重启、首次解锁不打开本APP、原耳机/音乐/固定媒体音量、断USB条件下，Home与锁屏两条均完整含联系人、音乐降低后恢复、手机无语音。用户记录call_6ebcfbf446e946159d8c6ad40e5a96fa第0/1项；随后只读核对真实事件与偏好，未再次启动APP、模拟广播或强停应用。
+
+实际偏好：speechGainDb=3、displayMode=2（DARK）、bootCount由77→78；enabled/bootRestore仍true、only/simplify仍false、target仍存在，不需要重选耳机。手机重启持久化与人工视觉 **PASS**。这不是延用Activity重建测试来冒称手机重启。
+
+| 真实事件 | 环境 | onReceive绝对elapsed | PCM处理阶段 | 首次写入 | PCM/写入字节 | 其他资源T6 | 音频资源标记 | finish调用T7/返回T8 |
+|---|---|---:|---:|---:|---|---:|---:|---|
+| SMS-000124 | Home后台，+3dB | 78249 | 321 | 1985 | 1467ms / 70400=70400 | 3648 | 3655 | 3666 / 3667 |
+| SMS-000125 | 锁屏，+3dB | 99026 | 101 | 1961 | 1467ms / 70400=70400 | 3627 | 3635 | 3644 / 3644 |
+
+表中阶段/清理/finish均相对onReceive的ms，仅onReceive一列是本次启动以来的绝对elapsedRealtime。两事件source=REAL_SMS、业务COMPLETED、foregroundBroadcast=true；上下文分别appVisible=false/interactive=true/keyguard=false与false/false/true。TTS初始化70/26ms，合成96/90ms；播放标记距首次写入1588/1593ms，后者不是耳机声学起音或准确声学播放时长。
+
+| 事件 | 超时回调T1 | TTS取消开始T2 | Track停止开始T3 | Track释放T4 | 焦点释放T5 | 其他资源T6 | finish调用T7 | 返回T8 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| SMS-000124 | 未触发 | 3637 | 3600 | 3621 | 3632 | 3648 | 3666 | 3667 |
+| SMS-000125 | 未触发 | 3612 | 3573 | 3594 | 3607 | 3627 | 3644 | 3644 |
+
+正常路径资源释放先于finish；两条均在原8秒内部预算内。本轮Application.onCreate入口未在保留日志中取得，Application→finish和系统真正分发→finish均 **NOT_MEASURABLE**，不声称取得新短信进程冷启动耗时或证明系统完整生命周期物理上界。历史SMS-000107冷启动相关证据及8014ms仍保留。本轮未重复10～15分钟静置，旧120是历史证据，不能冒称新构建长静置。
+
+证据：app/build/stage1.1-device/loudness-final-real-sms.json、post-reboot-loudness-settings.json。真实SMS只保存脱敏标量，不保存正文、联系人、号码或音频。本轮真实事件124/125与历史88～121（34条）及123合计37条可追溯记录；没有补造122。
+
+### 本轮APK
+
+所有路径相对D:\Projects\SMSVoiceAssistant，独立保存，未覆盖旧closeout或8秒原版证据。
+
+| APK | SHA256 |
+|---|---|
+| app\build\stage1.1-final-20261116\app-debug.apk | 9d28eca52253fe756efa6b4439054e8f6e73fbf31368c8cfcca9320e11366535 |
+| app\build\stage1.1-final-20261116\app-release-unsigned.apk | fdc4e5dc1064739e548f6bbf6a1e63c7a1b42cff05490355ed0af76dde9a4889 |
+| app\build\stage1.1-final-20261116\app-debug-androidTest.apk | 4cad9f3ca8e88977572b1bde1f5eaebe27aac0acec6b928b34112233c157fa56 |
+
+Release未配置发行签名，本轮不改签名；安装/真机测试使用Debug。后续源提交SHA及远端一致性在最终交付回复中核对，不把Q1提交当成最终功能提交。仅feature/v2-sms-speech-experience，不合并main，不改实验分支、V1标签或阶段1基线。
+
+
+### 后续新增：未知联系人提示（最终APK）
+
+用户在音频/主题回归完成后新增“无法获取联系人时读提示＋正文”。正式选用“未知联系人，正文”，不推断对方身份为陌生人，不读号码；精简验证码不变。通过统一forPlayback最终决策加入前缀，保持初步正文检查与查询后最终长度检查分开；未授权、无匹配及查询失败都归入同一降级输出。80限制包含6 UTF-16的提示与逗号，未知时正文最多74；更长整条拒绝，不截断；可靠短姓名仍按真实合计长度检查。
+
+新增4项UnknownContactSpeechTest（无/空/不安全名称、真实姓名、四组合、74/75/已知短姓名边界、URL清理空文、普通数字保护），全套JVM **108/108 PASS**。受影响的IndependentSmsRulesDeviceTest 7及SmsQueueDeviceTest 5共 **12/12设备PASS**，使用受控业务注入而非真实SMS；验证未知提示、独立四组合、原队列非抢占/P0/FIFO/容量与截止时间规则。旧Debug注入工具的全文预期及80字样本同步更新，不把未跑旧整套工具写成PASS。
+
+**真实SMS-000126 PASS**：+3dB，前台/解锁，用户明确确认“未知联系人，晚上七点见。”完整、不读号码、手机无语音（call_a9f0388df6324c7cacec561ccdf22fc3）。用户未说明选用未存号码还是暂撤联系人权限的测试方式，因此只证明降级话术真实通过，不分别伪称两种方式都已补测。
+
+onReceive绝对elapsed=613668ms；PCM2747ms、131840字节全部写入；处理阶段106ms，首写1915ms；Track停止开始4771、释放4781、焦点释放4784、TTS取消开始4785、其他资源T6=4789、finish调用/返回T7/T8=4791ms，均相对接收。系统分发起点不可观测。Application入口595469ms早于接收18199ms，Application→finish22990ms是已运行进程寿命加本条处理，**不是冷初始化耗时或广播耗时**，不误判8秒预算超限。
+
+该增量之后的最终APK为9d28eca5…，已安装且设备APK SHA256与交付一致；只改变全文发送者降级和相应UI说明/测试，音频DSP、主题持久化、蓝牙、预算/finish未再改动。音频/主题构建1c6174ba…的124/125重启后台证据保留并注明版本，不声称在9d28上重新执行了重启或整套18项音频回归；新增受影响路径由12项设备与真实126闭环。总计38条可追溯真实SMS（历史35＋124/125/126），122仍未补造。
+
+最终无新增权限/Service/后台机制，Debug/unsigned Release/androidTest构建、108单元、最新Lint及APK隔离通过；当前READY_FOR_USER_ACCEPTANCE，等待用户确认关闭阶段1.1。
+
+### 本轮修改文件清单（相对da5c70e，含Q1审计）
+
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/DebugSmsInjectionTest.kt`
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/IndependentSmsRulesDeviceTest.kt`
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/LoudnessAuditDeviceTest.kt`
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/SessionCloseoutDeviceTest.kt`
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/SmsQueueDeviceTest.kt`
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/SpeechExperienceDeviceTest.kt`
+- `app/src/androidTest/java/com/mxy1021/smsvoiceassistant/ThemeGainDeviceTest.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/MainActivity.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/audio/SessionLoudness.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/audio/SpeechDependencies.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/audio/SpeechPcmProcessor.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/audio/SpeechSession.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/settings/SettingsRepository.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/AnnouncementRules.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/SmsCoordinator.kt`
+- `app/src/test/java/com/mxy1021/smsvoiceassistant/SpeechExperienceTest.kt`
+- `app/src/test/java/com/mxy1021/smsvoiceassistant/SpeechPcmProcessorTest.kt`
+- `app/src/test/java/com/mxy1021/smsvoiceassistant/UnknownContactSpeechTest.kt`
+- `docs/v2.0/architecture.md`
+- `docs/v2.0/audio-loudness-audit.md`
+- `docs/v2.0/development-plan.md`
+- `docs/v2.0/requirements.md`
+- `docs/v2.0/stage1.1-acceptance.md`
+- `docs/v2.0/stage1.1-architecture.md`
+- `docs/v2.0/stage1.1-report.md`
+- `docs/v2.0/stage1.1-requirements.md`
+- `docs/v2.0/stage1.1-test-plan.md`
+- `docs/v2.0/stage1.1-test-results.md`
+- `docs/v2.0/technical-decisions.md`
+- `scripts/Verify-DebugSmsIsolation.py`
+
+## 历史收尾快照（原文及失败记录保留，当前决定以上文为准）
+
 日期：2026-11-15（Asia/Shanghai）。**本轮正式验收收尾已形成证据：安全前置清理已最小修复；106仍NOT_MEASURABLE；四组合8格映射PASS；真实URL MANUAL_BLOCKED；真实SMS优先重排BLOCKED。阶段1.1仍NOT_ACCEPTED，由用户决定是否接受这些边界。** 原始失败、阶段1稳定基线及V1标签不变。
 
 ## 本轮范围与预算结论
