@@ -124,3 +124,5 @@
 这些受控测试没有PendingResult；8510ms是T11资源释放，不是实际finish。候选真实SMS finish、系统分发至finish和B01～B12全部真实场景仍未完成，不伪造ANR或广播阻塞结论。严格内部预算已有反例，因此没有继续扩大候选人工验收或PCM上限。
 
 已保留budget-8500-instrumentation.txt、budget-8500-exact-release.json；已同签名install -r恢复正式8秒应用及测试包。拉取手机实际安装APK计算SHA256，与正式8秒产物相同：d18d312f43c77543349192fd156b37f04c48ead37aa1776e4741560d3daa0fb6。不是仅凭相同versionName猜测预算。恢复后设置快照另存after-budget-restored.json，未卸载或清数据。
+
+最终代码审查新增名称内点号/不间断空格分隔长号码负例，纯文本策略保守降级；完整JVM仍93/93，Debug/Release/androidTest及Lint重新通过。此修正不改变预算、PCM、路由或音量实现；8.5秒已失败的实验数据仍按原共同基线5da72ad/候选44bc07e保存，不冒称为此后构建的实测。
