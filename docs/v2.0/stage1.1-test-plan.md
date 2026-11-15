@@ -1,5 +1,13 @@
 # V2.0 阶段1.1测试计划
 
+## 正式关闭（2026-11-16，Asia/Shanghai）
+
+**CLOSED / ACCEPTED。** 用户已明确正式验收阶段1.1，并接受最终验收报告列明的全部ACCEPTED_LIMITATION、MANUAL_BLOCKED、NOT_MEASURABLE和DEFERRED_OUT_OF_SCOPE。正式关闭不改变这些项目的证据状态，不把未测、受阻、不可测或历史失败改记PASS。
+
+验收源码为[fbd183b71f1eec74a84e00976256044c579a367c](https://github.com/mxy1021/sms-voice-assistant/commit/fbd183b71f1eec74a84e00976256044c579a367c)，用户确认的最终交付文档提交为[68b378baca2599915b747f3f22c64ca0c769ff6b](https://github.com/mxy1021/sms-voice-assistant/commit/68b378baca2599915b747f3f22c64ca0c769ff6b)。详见[正式关闭报告](stage1.1-closure-report.md)。本次只归档Markdown，不修改生产代码或测试代码，不构建、不安装、不重跑验收测试；阶段2未启动。
+
+## 验收前测试计划（历史原文保留，不要求重新执行）
+
 ## 后续未知联系人增量验证
 
 全文无可靠名称统一“未知联系人，正文”，精简不变；补4项纯逻辑（四组合、名称/号码防护、最终80界限和URL空文）、12项受影响设备规则/队列，1条真实短信只验证实际采用的降级方式。前缀变更前后APK/证据分开，未改动的音频/主题不重复整套验收，历史95/121只读正文不改写。

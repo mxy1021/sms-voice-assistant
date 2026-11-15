@@ -1,6 +1,8 @@
 # V2.0 阶段1.1架构
 
-状态：READY_FOR_USER_ACCEPTANCE，等待用户正式关闭。沿用SmsReceiver → SmsAssembly / ReplayGuard → SmsCoordinator → SpeechFormatter → SpeechSession；不新增接收架构或常驻对象。
+状态：CLOSED / ACCEPTED（2026-11-16用户正式确认）；架构及生产代码本次不变。沿用SmsReceiver → SmsAssembly / ReplayGuard → SmsCoordinator → SpeechFormatter → SpeechSession；不新增接收架构或常驻对象。
+
+关闭依据与产物核验见[正式关闭报告](stage1.1-closure-report.md)，历史实验和未验证边界原样保留，阶段2未启动。
 
 ## 文本与联系人
 

@@ -1,5 +1,13 @@
 # V2.0 阶段1.1技术与交付报告
 
+## 正式关闭（2026-11-16，Asia/Shanghai）
+
+**CLOSED / ACCEPTED。** 用户已明确正式验收阶段1.1，并接受最终验收报告列明的全部ACCEPTED_LIMITATION、MANUAL_BLOCKED、NOT_MEASURABLE和DEFERRED_OUT_OF_SCOPE。正式关闭不改变这些项目的证据状态，不把未测、受阻、不可测或历史失败改记PASS。
+
+验收源码为[fbd183b71f1eec74a84e00976256044c579a367c](https://github.com/mxy1021/sms-voice-assistant/commit/fbd183b71f1eec74a84e00976256044c579a367c)，用户确认的最终交付文档提交为[68b378baca2599915b747f3f22c64ca0c769ff6b](https://github.com/mxy1021/sms-voice-assistant/commit/68b378baca2599915b747f3f22c64ca0c769ff6b)。详见[正式关闭报告](stage1.1-closure-report.md)。本次只归档Markdown，不修改生产代码或测试代码，不构建、不安装、不重跑验收测试；阶段2未启动。
+
+## 验收前交付与测试记录（原文保留）
+
 本轮最终源码：[commit fbd183b71f1eec74a84e00976256044c579a367c](https://github.com/mxy1021/sms-voice-assistant/commit/fbd183b71f1eec74a84e00976256044c579a367c)；分支feature/v2-sms-speech-experience。文档验收结论为READY_FOR_USER_ACCEPTANCE，尚未正式关闭。
 
 ## 最终功能完善交付（2026-11-16，当前优先）
