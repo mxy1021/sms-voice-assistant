@@ -53,6 +53,7 @@ class SpeechExperienceDeviceTest {
         assumeTrue("Original target route required", route.get(3, TimeUnit.SECONDS))
         val settings = main { app.settings.snapshot() }
         val manager = app.getSystemService(AudioManager::class.java)
+        if (mode == "loss") assumeTrue("Do not permanently interrupt an external music player", !manager.isMusicActive)
         val volume = manager.getStreamVolume(AudioManager.STREAM_MUSIC)
         var created = 0; var released = 0; var configured = 0; var actualSession = 0
         val deps = object : SpeechDependencies {
