@@ -125,6 +125,7 @@ GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/com
 - `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/ContactMatchPolicy.kt`
 - `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/ContactNameResolver.kt`
 - `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/SmsCoordinator.kt`
+- `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/SmsSafetyWindow.kt`
 - `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/SmsTextCleaner.kt`
 - `app/src/main/java/com/mxy1021/smsvoiceassistant/sms/SmsWaitingQueue.kt`
 - `app/src/test/java/com/mxy1021/smsvoiceassistant/AnnouncementRulesTest.kt`
