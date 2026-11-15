@@ -202,3 +202,11 @@
 API分类INCOMPLETE不等于已部分播放：108/109均0字节；112沿用规则不播报的IGNORED分类，实际原因是全文超限。所有时序均onReceive→实际PendingResult.finish返回，不是系统分发周期。脱敏证据async-guard-long-confirmed.json、async-guard-long-reasons.json、async-guard-char-limit-confirmed.json、sms-112-char-limit-reason.json。
 
 截至112，新功能真实SMS共25条：16完整、3规则/全文门禁忽略、2主动安全取消、2PCM超限零写入、1拼接拒绝、1撤权后终结不可观测。长混合码不保证播报成功；保持原大写/小写字母表达和完整优先，没有为了样本通过修改PCM或预算。
+
+## 连续真实SMS首轮：两条完整，未触发入队
+
+用户反馈听到A123后00981，第一条未被打断，没有只播前半段，手机无语音。对应113完整4387ms/210560字节、finish6449ms；114完整2747ms/131840字节、finish4830ms。114的onReceive发生于113的finish返回后145ms，两条均没有“等待队列”字段，**本轮未构成应用内并发入队，不能据听到的顺序判定P0优先PASS**。
+
+指令中的普通短信“第二条。”尚未找到对应APP入口/终结事件，已请用户确认是否实际发送并在目标手机收到；不假设被队列丢弃、忽略或超时。PDU时间至入口差1910/3503ms包含不可分离的网络/时钟/系统阶段，不是系统广播排队耗时。证据queue-user-confirmed.json、queue-user-confirmed-reasons.json。
+
+截至114，本轮共27条真实SMS事件，18完整，其余分类同112统计；连续队列专项仍为PARTIAL/NOT_EXERCISED，受控协调器优先级/容量/FIFO测试PASS不替代真实SMS并发验证。
