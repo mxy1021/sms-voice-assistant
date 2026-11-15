@@ -8,7 +8,7 @@ param(
     [ValidateSet('RuleMatrix','Otp','OtpFull','Normal','Numbers','Mixed','OtpAmbiguous','Long','Long80','Long81',
         'LongPcm','Rapid','Disabled','Disconnected','Focus','Multipart','Logic','All','Safety','StopDuring',
         'RulesDuring','SimplifyDuring','TtsFailures','FocusFailure','FocusPermanent','BluetoothPermission','DisconnectDuring','RouteDuring',
-        'NotificationRepro','NotificationStartup','NotificationBefore','NotificationLate','PauseDisconnect')]
+        'NotificationRepro','NotificationStartup','NotificationDelayedStartup','NotificationBefore','NotificationLate','PauseDisconnect')]
     [string]$Case = 'All',
     [string]$Serial
 )

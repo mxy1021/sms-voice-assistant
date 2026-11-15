@@ -270,13 +270,18 @@ class DebugSmsInjectionTest {
                 assertTrue(waitUntil(3000) { main { (app.session?.bytesWritten ?: 0) > 0 } })
                 Thread.sleep(500)
             } else if (mode != "before") {
-                Thread.sleep((submittedAt + 900 - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+                val notificationStart = if (mode == "delayedStartup") 1400 else 900
+                Thread.sleep((submittedAt + notificationStart - SystemClock.elapsedRealtime()).coerceAtLeast(0))
             }
             if (!acquired) {
                 acquired = main { audio.requestAudioFocus(contender) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED }
                 assertTrue("Real competing focus request required", acquired)
             }
-            val holdUntil = SystemClock.elapsedRealtime() + if (mode == "before") 1500 else 4866
+            val holdUntil = SystemClock.elapsedRealtime() + when (mode) {
+                "before" -> com.mxy1021.smsvoiceassistant.audio.SpeechStartPolicy.SMS_INITIAL_WINDOW_MS + 300
+                "delayedStartup" -> 5322
+                else -> 4866
+            }
             if (mode == "late" || mode == "repro") {
                 assertTrue("Actual -3 required, not a synthetic callback", waitUntil(1000) { main {
                     app.smsEvents.value.first { it.id == current.id }.fields["onAudioFocusChange"] == "-3"
@@ -289,7 +294,11 @@ class DebugSmsInjectionTest {
             main { audio.abandonAudioFocusRequest(contender) }; acquired = false
             val r = await(current); val s = r.speech!!
             assertTrue(s.focusReleased); assertTrue(idle())
-            if (mode in setOf("before", "startup")) {
+            if (mode == "delayedStartup" && !s.playbackCompleted) {
+                emit(id, "FAIL", "DELAYED_STARTUP_COLLISION;SAFE_CANCEL_IS_NOT_SUCCESSFUL_DELIVERY", r, "ANDROID_SYSTEM")
+                return
+            }
+            if (mode in setOf("before", "startup", "delayedStartup")) {
                 assertTrue("Speech must finish within the original budget", s.playbackCompleted)
                 assertTrue(s.actualRouteConfirmed)
                 assertTrue("Our initial legal focus request must reach the competing owner", main { competitorChanges.contains(-3) })
@@ -501,6 +510,7 @@ class DebugSmsInjectionTest {
                         "Focus" -> { focus("resume"); focus("stop"); focus("timeout") }
                         "NotificationRepro" -> notificationTiming("repro")
                         "NotificationStartup" -> notificationTiming("startup")
+                        "NotificationDelayedStartup" -> notificationTiming("delayedStartup")
                         "NotificationBefore" -> notificationTiming("before")
                         "NotificationLate" -> notificationTiming("late")
                         "PauseDisconnect" -> focus("disconnect")

@@ -11,16 +11,21 @@ class SpeechStartPolicyTest {
         assertEquals(0L, SpeechStartPolicy.delayMs(false, 1000, 1000))
     }
     @Test fun smsSynthesisRunsInsideTheWindowWithoutAddingASecondFullDelay() {
-        assertEquals(1200L, SpeechStartPolicy.delayMs(true, 1000, 1000))
-        assertEquals(1000L, SpeechStartPolicy.delayMs(true, 1000, 1200))
-        assertEquals(1L, SpeechStartPolicy.delayMs(true, 1000, 2199))
+        assertEquals(1800L, SpeechStartPolicy.delayMs(true, 1000, 1000))
+        assertEquals(1600L, SpeechStartPolicy.delayMs(true, 1000, 1200))
+        assertEquals(1L, SpeechStartPolicy.delayMs(true, 1000, 2799))
     }
     @Test fun slowSynthesisAndRepeatedQueriesNeverRestartTheWindow() {
-        assertEquals(0L, SpeechStartPolicy.delayMs(true, 1000, 2200))
+        assertEquals(0L, SpeechStartPolicy.delayMs(true, 1000, 2800))
         assertEquals(0L, SpeechStartPolicy.delayMs(true, 1000, 5000))
     }
     @Test fun invalidClockDoesNotCreateAnUnboundedDelay() {
         assertEquals(0L, SpeechStartPolicy.delayMs(true, 1000, 999))
+    }
+    @Test fun observedDelayedStartupFallsInsideSingleBoundedWindow() {
+        assertEquals(365L, SpeechStartPolicy.delayMs(true, 1000, 2435))
+        assertEquals(0L, SpeechStartPolicy.delayMs(true, 1000, 2800))
+        assertEquals(8000L, SmsSafetyWindow.SESSION_BUDGET_MS)
     }
     @Test fun windowStillAllowsMaximumPcmWithinUnchangedBudgetWhenSetupIsFast() {
         assertEquals(8000L, SmsSafetyWindow.SESSION_BUDGET_MS)
