@@ -37,6 +37,10 @@ class SmsReceiver : BroadcastReceiver() {
                 app.smsTime(id, "goAsync调用", asyncStart)
                 app.smsTime(id, "goAsync返回", asyncEnd)
                 app.finishSmsEvent(id, finishStart, finishEnd)
+            } else {
+                // Parse failure still owns a real PendingResult, even without a diagnostic ID.
+                com.mxy1021.smsvoiceassistant.audio.Stage0Log.timing(null, "PendingResult.finish调用", finishStart, receivedElapsed)
+                com.mxy1021.smsvoiceassistant.audio.Stage0Log.timing(null, "PendingResult.finish返回", finishEnd, receivedElapsed)
             }
         }
         try {

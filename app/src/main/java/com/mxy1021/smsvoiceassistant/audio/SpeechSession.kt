@@ -3,7 +3,6 @@ package com.mxy1021.smsvoiceassistant.audio
 import android.Manifest
 import android.bluetooth.BluetoothDevice
 import android.content.*
-import android.content.pm.PackageManager
 import android.media.*
 import android.os.*
 import android.speech.tts.TextToSpeech
@@ -33,7 +32,7 @@ class SpeechSession(
     private val target = app.target
     private val permit = app.settings.permit(fromSms)
     private fun authorized() = permit?.let { app.settings.valid(it) } == true && permitted() &&
-        (!fromSms || app.checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED)
+        (!fromSms || dependencies.permissionGranted(app, Manifest.permission.RECEIVE_SMS))
     private var tts: TextToSpeech? = null
     private var sink: ParcelFileDescriptor? = null
     private var focus: AudioFocusRequest? = null
@@ -84,6 +83,15 @@ class SpeechSession(
             end("恢复执行时已超过${SmsSafetyWindow.SESSION_BUDGET_MS}ms，丢弃在途语音，不延长广播")
             return false
         }
+        if (reserveCleanupIfNeeded()) return false
+        return true
+    }
+    private fun reserveCleanupIfNeeded(): Boolean {
+        if (ended) return true
+        if (!SmsSafetyWindow.shouldReserveCleanup(startElapsed, SystemClock.elapsedRealtime(),
+                playing, focusGate.held, playbackDone)) return false
+        mark("清理预留触发")
+        end("为${SmsSafetyWindow.SESSION_BUDGET_MS}ms总预算保留既有清理时间；停止未播放或暂停中的等待并释放会话")
         return true
     }
     private fun log(value: String) = app.timeline.add(value)
@@ -106,6 +114,7 @@ class SpeechSession(
         mark("Handler超时回调")
         end("${SmsSafetyWindow.SESSION_BUDGET_MS}ms总预算超时；实际elapsed=${SystemClock.elapsedRealtime() - startElapsed}ms；合成请求=$synthesisRequested，onStart=$synthesisStarted，合成完成=$synthesisDone，播放完成=$playbackDone")
     }
+    private val cleanupWindow = Runnable { mark("清理预留检查"); reserveCleanupIfNeeded() }
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             if (removedDevices.any { it.id == track?.routedDevice?.id || it.address.equals(target, true) })
@@ -133,6 +142,8 @@ class SpeechSession(
         log("独立创建新 TTS，不复用兼容性实例；焦点回调及 stop/abandon 在本时序记录")
         // 包含蓝牙查询、冷启动合成和播放在内总计最多 8 秒。
         main.postDelayed(timeout, maxOf(0L, SmsSafetyWindow.SESSION_BUDGET_MS - (SystemClock.elapsedRealtime() - startElapsed)))
+        main.postDelayed(cleanupWindow, maxOf(0L, SmsSafetyWindow.SESSION_BUDGET_MS -
+            PcmBudget.ROUTE_AND_CLEANUP_MS - (SystemClock.elapsedRealtime() - startElapsed)))
         try {
             app.registerReceiver(disconnect, IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED), Context.RECEIVER_EXPORTED)
             receiverRegistered = true
@@ -267,7 +278,7 @@ class SpeechSession(
         override fun onStop(utteranceId: String, interrupted: Boolean) { main.post { if (!ended) { log("onStop：interrupted=$interrupted"); end("TTS 被取消") } } }
     }
 
-    private fun permitted() = app.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    private fun permitted() = dependencies.permissionGranted(app, Manifest.permission.BLUETOOTH_CONNECT)
     private fun matches(device: AudioDeviceInfo?) = permitted() && device != null &&
         BluetoothProbe.bluetooth(device) && RoutePolicy.matches(target, listOf(device.address))
 
@@ -301,6 +312,7 @@ class SpeechSession(
                 try { track?.pause() } catch (_: Exception) { end("临时焦点丢失时暂停语音失败"); return }
                 mark("语音临时暂停")
                 trace("pcmPaused", detail = "change=$change")
+                if (reserveCleanupIfNeeded()) return
                 app.event("临时音频占用：本次语音暂停等待焦点，仍受${SmsSafetyWindow.SESSION_BUDGET_MS}ms预算限制", background)
             }
             SpeechFocusAction.RESUME -> {
@@ -474,30 +486,38 @@ class SpeechSession(
     }
 
     private fun verifyLiveRoute() { if (!ended && !matches(track?.routedDevice)) end("实际路由改变或权限撤销，取消播报") }
-    fun cancel() = end("用户取消，焦点已释放")
+    fun cancel() {
+        if (Looper.myLooper() == main.looper) end("用户取消，焦点已释放")
+        else main.post { end("用户取消，焦点已释放") }
+    }
     private fun end(code: String) {
         if (ended) return
+        ended = true // All terminal work runs on the main looper; stop writes before diagnostics.
         trace("sessionEnding", detail = "reason=$code;stage=$stage;playbackCompleted=$playbackDone")
         record("PCM写入字节数", bytesWritten)
         record("完整PCM字节数", totalPcmBytes)
         record("焦点变化序列", focusChanges.joinToString(","))
-        ended = true
         focusGate.end()
         onFocusReady = null
         pendingStart?.let { main.removeCallbacks(it) }; pendingStart = null
         playbackPcm?.fill(0)
         playbackPcm = null
         main.removeCallbacks(timeout)
+        main.removeCallbacks(cleanupWindow)
         log("最终失败阶段=${if (playbackDone) "无" else stage}；$code")
         record("最终失败节点", if (playbackDone) "无 API 失败" else stage)
         record("最终结果", if (playbackDone) "PCM 播放完成回调，听验未验证" else "未完成：$code")
         record("后台限制", "未验证；${if (background) "后台失败需对照 AudioHardening 和生命周期日志" else "前台执行不能证明后台可播放"}")
         log("状态汇总：tts.speak未使用，合成请求=$synthesisRequested，onStart=$synthesisStarted，onDone(合成)=$synthesisDone，播放完成=$playbackDone")
         if (track != null) log("调用 AudioTrack.stop/flush/release；播放完成前=${!playbackDone}；原因=$code")
-        runCatching { track?.stop() }
+        if (track != null) mark("AudioTrack停止开始")
+        val stopped = runCatching { track?.stop(); true }.getOrDefault(false)
+        if (track != null) { mark("AudioTrack停止完成"); record("AudioTrack停止调用成功", stopped) }
         runCatching { track?.flush() }
         loudness.release()
-        runCatching { track?.release() }
+        if (track != null) mark("AudioTrack释放开始")
+        val trackReleased = runCatching { track?.release(); true }.getOrDefault(false)
+        if (track != null) { mark("AudioTrack释放完成"); record("AudioTrack释放调用成功", trackReleased) }
         track = null
         val focusReleased = focus?.let {
             mark("焦点释放开始")
@@ -507,15 +527,18 @@ class SpeechSession(
         log(if (focus == null) "未申请焦点，未调用 abandonAudioFocusRequest" else "焦点释放成功=$focusReleased")
         trace("focusReleased", detail = "success=$focusReleased")
         if (tts != null) {
+            mark("TTS取消开始")
             log("调用 tts.stop：合成请求前=${!synthesisRequested}，合成onDone前=${!synthesisDone}，实际播放完成前=${!playbackDone}；原因=$code")
             log("tts.stop 返回=${runCatching { tts!!.stop() }.getOrNull() ?: "异常"}")
             log("调用 tts.shutdown；${runCatching { tts!!.shutdown(); "完成" }.getOrDefault("异常")}")
+            mark("TTS取消结束")
         } else log("未创建 TTS，没有调用 stop/shutdown")
         runCatching { sink?.close() }
         runCatching { audio.unregisterAudioDeviceCallback(deviceCallback) }
         if (receiverRegistered) runCatching { app.unregisterReceiver(disconnect) }
         synchronized(pcm) { pcm.clear() }
         worker.shutdownNow()
+        mark("其他会话资源释放完成")
         mark("音频资源释放完成")
         sms("TTS", when {
             playbackDone -> "合成和播放完成回调已到达；实际耳机听验待记录"

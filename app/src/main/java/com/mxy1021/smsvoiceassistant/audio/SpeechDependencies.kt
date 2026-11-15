@@ -7,6 +7,8 @@ import android.speech.tts.TextToSpeech
 
 /** Platform boundary. Production always uses the default implementation; no runtime selector. */
 interface SpeechDependencies {
+    fun permissionGranted(context: Context, permission: String): Boolean =
+        context.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
     fun createLoudness(sessionId: Int): LoudnessEffect {
         require(sessionId > 0) // Never attach an effect to the global output mix (session 0).
         val effect = android.media.audiofx.LoudnessEnhancer(sessionId)

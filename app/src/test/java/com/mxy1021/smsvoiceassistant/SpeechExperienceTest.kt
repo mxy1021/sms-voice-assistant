@@ -32,6 +32,7 @@ class SpeechExperienceTest {
     }
     @Test fun linksAndMeaningfulInformation() {
         val cases = mapOf(
+            "请看http://example.com/a?x=1，明天见。" to "请看，明天见。",
             "您的快递已到。详情：https://example.com/a?utm_id=123" to "您的快递已到。",
             "先看https://a.com/x，然后明天见。" to "先看，然后明天见。",
             "链接：https://a.com/a；链接：https://b.cn/?a=1。" to "",

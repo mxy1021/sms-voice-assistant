@@ -7,4 +7,11 @@ object SmsSafetyWindow {
     fun freshPdu(ages: List<Long>) = ages.isNotEmpty() && ages.all { it in 0..MAX_PDU_AGE_MS }
     fun withinBudget(startElapsed: Long, nowElapsed: Long) =
         nowElapsed >= startElapsed && nowElapsed - startElapsed < SESSION_BUDGET_MS
+
+    /** Existing PCM admission already reserves this cleanup time. Never shorten active audio. */
+    fun shouldReserveCleanup(startElapsed: Long, nowElapsed: Long, playing: Boolean,
+        focusHeld: Boolean, playbackCompleted: Boolean) =
+        nowElapsed >= startElapsed &&
+            nowElapsed - startElapsed >= SESSION_BUDGET_MS - PcmBudget.ROUTE_AND_CLEANUP_MS &&
+            !playbackCompleted && (!playing || !focusHeld)
 }
