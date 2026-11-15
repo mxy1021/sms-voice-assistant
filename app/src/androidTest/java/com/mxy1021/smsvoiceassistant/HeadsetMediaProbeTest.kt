@@ -35,13 +35,15 @@ class HeadsetMediaProbeTest {
         }
         assumeTrue(main { app.smsCoordinator.preflight() == null && app.session == null })
         val stopKey = args.getString("observedStopKey")?.toIntOrNull()
+        val controlledFailure = args.getString("controlledMediaFailure") == "true"
         val done = CompletableFuture<SpeechResult>()
         var media: MediaSession? = null
         var created = false; var released = false; var keyUps = 0; var cancelled = false
         fun releaseMedia() {
             media?.let { session ->
-                try { session.isActive = false; session.setCallback(null); session.release() }
-                finally { released = true; media = null }
+                runCatching { session.isActive = false }
+                runCatching { session.setCallback(null) }
+                try { session.release(); released = true } finally { media = null }
             }
         }
         val deps = object : SpeechDependencies {
@@ -65,6 +67,7 @@ class HeadsetMediaProbeTest {
                     session.setPlaybackState(PlaybackState.Builder().setState(PlaybackState.STATE_PLAYING, 0, 1f)
                         .setActions(PlaybackState.ACTION_STOP).build())
                     session.isActive = true
+                    if (controlledFailure) throw IllegalStateException("CONTROLLED_MEDIA_SETUP_FAILURE")
                 }
                 return result
             }
@@ -82,8 +85,13 @@ class HeadsetMediaProbeTest {
             assertTrue(result.focusReleased)
             assertNull(main { app.session })
             assertEquals(created, released)
+            if (controlledFailure) {
+                assertTrue(created)
+                assertFalse(result.playbackCompleted)
+                assertEquals(0, result.bytesWritten)
+            }
             instrumentation.sendStatus(2, Bundle().apply { putString("stream",
-                "\nSVA_MEDIA_PROBE created=$created;released=$released;keyUps=$keyUps;cancelled=$cancelled;musicContinuity=MANUAL_REQUIRED;targetIdentity=UNVERIFIED\n") })
+                "\nSVA_MEDIA_PROBE created=$created;released=$released;keyUps=$keyUps;cancelled=$cancelled;controlledFailure=$controlledFailure;musicContinuity=MANUAL_REQUIRED;targetIdentity=UNVERIFIED\n") })
             // No received key is a feasibility result, never a fake PASS on reliable delivery.
         } finally { main { app.session?.cancel(); releaseMedia() } }
     }
