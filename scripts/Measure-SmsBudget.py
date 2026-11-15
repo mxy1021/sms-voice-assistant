@@ -53,8 +53,16 @@ def main():
             return int(values[-1]) if values and re.fullmatch(r"[0-9]+", str(values[-1])) else None
         dispositions = [e.get("value") for e in rows if e.get("field") == "业务结果" and
                         e.get("value") in ("REJECTED", "IGNORED", "BUSY", "COMPLETED", "INCOMPLETE")]
+        contexts = [re.fullmatch(r"ActivityStarted=(true|false)；interactive=(true|false)；keyguard=(true|false)；importance=([0-9]+)",
+                                str(e.get("value", ""))) for e in rows if e.get("kind") == "context" and e.get("field") == "onReceive状态"]
+        contexts = [m for m in contexts if m]
+        observed_context = dict(zip(("appVisible", "interactive", "keyguardLocked"),
+                                   (v == "true" for v in contexts[-1].groups()[:3]))) if contexts else None
+        effects = [e.get("value") for e in rows if e.get("field") == "语音增强生效" and e.get("value") in ("true", "false")]
         events.append(dict(id=ident, source="REAL_SMS", pointsElapsedMs=points,
             disposition=dispositions[-1] if dispositions else "UNOBSERVED",
+            receiveContext=observed_context, speechGainDb=integer("语音增强dB"),
+            effectConfigured=effects[-1] == "true" if effects else None,
             foregroundBroadcast=flags[-1]["value"] == "true" if flags else None,
             systemDispatchElapsedMs=None, systemDispatchToFinishMs=None,
             systemDispatchObservation="UNAVAILABLE: no exact system_server dispatch timestamp",

@@ -56,7 +56,8 @@ class SpeechExperienceTest {
         assertNull(ContactMatchPolicy.match(valid, emptyList()))
         assertNull(ContactMatchPolicy.match(valid, listOf("13900138000" to "张三")))
         assertNull(ContactMatchPolicy.match(valid, listOf(valid to "张三", valid to "李四")))
-        listOf("13800138000", "张三13800138000", "https://a.com", "张\n三").forEach {
+        listOf("13800138000", "张三13800138000", "张三138.0013.8000", "张三138\u00a00013\u00a08000",
+            "https://a.com", "张\n三").forEach {
             assertEquals("晚上见。", SpeechFormatter.choose("晚上见。", full, it).text)
         }
     }

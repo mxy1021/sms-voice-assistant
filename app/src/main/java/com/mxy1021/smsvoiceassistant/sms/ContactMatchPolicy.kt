@@ -11,6 +11,7 @@ object ContactMatchPolicy {
     }
     fun safeName(name: String?): String? = name?.trim()?.takeIf {
         it.length in 1..30 && it.any { ch -> ch.isLetter() } &&
+            it.count { ch -> ch.isDigit() } < 7 &&
             it.none { ch -> ch.isISOControl() } &&
             !Regex("[0-9][0-9 ()+-]{5,}[0-9]|https?://|www\\.", RegexOption.IGNORE_CASE).containsMatchIn(it)
     }
