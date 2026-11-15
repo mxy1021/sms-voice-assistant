@@ -1,7 +1,7 @@
 """Privacy-safe ADB checks. Never sends SMS, grants permissions, clears data or reboots.
 
 python scripts/Test-Stage1Device.py --ui-smoke
-UI smoke briefly changes the OTP filter and restores it in finally; keep phone idle.
+UI smoke checks all four independent rule combinations and restores both in finally; keep phone idle.
 --set-enabled / --set-boot-restore intentionally change the corresponding real UI switch.
 With no flags this is read-only: it never opens the app. Entry counts refer only to
 retained app logs, not guaranteed broadcast delivery or a replacement for real H07.
@@ -143,16 +143,26 @@ def main():
         original = device.settings()
         try:
             result["productionTitleVisible"] = device.node("SMS Voice Assistant") is not None
-            device.toggle("仅播报验证码", False)
-            simplify = device.node("精简验证码播报")
-            result["simplifyDisabledInFullMode"] = simplify.get("enabled") == "false"
-            result["simplifyValuePreserved"] = original["otpSimplifyEnabled"] == device.settings()["otpSimplifyEnabled"]
-            device.toggle("仅播报验证码", True)
-            result["simplifyRestoredAfterFilterEnabled"] = original["otpSimplifyEnabled"] == device.settings()["otpSimplifyEnabled"]
-            assert all(result[k] for k in ["productionTitleVisible", "simplifyDisabledInFullMode", "simplifyValuePreserved", "simplifyRestoredAfterFilterEnabled"])
+            result["independentRuleCombinations"] = []
+            for only, simplify in [(False, False), (False, True), (True, True), (True, False)]:
+                before = device.settings()
+                device.toggle("仅播报验证码", only)
+                assert before["otpSimplifyEnabled"] == device.settings()["otpSimplifyEnabled"]
+                assert device.node("精简验证码播报").get("enabled") == "true"
+                device.toggle("精简验证码播报", simplify)
+                saved = device.settings()
+                assert saved["otpOnlyEnabled"] == only and saved["otpSimplifyEnabled"] == simplify
+                for label, expected in [("仅播报验证码", only), ("精简验证码播报", simplify)]:
+                    node = device.node(label)
+                    assert node.get("enabled") == "true" and node.get("checked") == str(expected).lower()
+                assert all(saved[k] == original[k] for k in original if k not in ("otpOnlyEnabled", "otpSimplifyEnabled"))
+                result["independentRuleCombinations"].append({"otpOnly": only, "simplify": simplify, "status": "PASS"})
+            assert result["productionTitleVisible"]
         finally:
             device.top()
             device.toggle("仅播报验证码", original["otpOnlyEnabled"])
+            device.toggle("精简验证码播报", original["otpSimplifyEnabled"])
+            assert device.settings() == original
     if args.set_enabled:
         device.top(); device.toggle("启用短信播报", args.set_enabled == "true")
     if args.set_boot_restore:

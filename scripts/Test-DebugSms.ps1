@@ -5,9 +5,9 @@ Build/install instructions and evidence limits: docs/debug-sms-testing.md
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Otp','OtpFull','Normal','Numbers','Mixed','OtpAmbiguous','Long','Long80','Long81',
+    [ValidateSet('RuleMatrix','Otp','OtpFull','Normal','Numbers','Mixed','OtpAmbiguous','Long','Long80','Long81',
         'LongPcm','Rapid','Disabled','Disconnected','Focus','Multipart','Logic','All','Safety','StopDuring',
-        'RulesDuring','TtsFailures','FocusFailure','FocusPermanent','BluetoothPermission','DisconnectDuring','RouteDuring',
+        'RulesDuring','SimplifyDuring','TtsFailures','FocusFailure','FocusPermanent','BluetoothPermission','DisconnectDuring','RouteDuring',
         'NotificationRepro','NotificationStartup','NotificationBefore','NotificationLate','PauseDisconnect')]
     [string]$Case = 'All',
     [string]$Serial

@@ -49,7 +49,7 @@ class DebugSmsInjectionTest {
     }
     private fun configure(only: Boolean, simplify: Boolean) = main {
         // Normal repository setters, not an override of the coordinator's configuration.
-        app.settings.setOtpOnly(true); app.settings.setSimplify(simplify); app.settings.setOtpOnly(only)
+        app.settings.setOtpOnly(only); app.settings.setSimplify(simplify)
     }
     private fun submit(text: String, parts: List<String> = listOf(text), coordinator: SmsCoordinator = app.smsCoordinator): Submission {
         val future = CompletableFuture<SmsResult>()
@@ -73,7 +73,7 @@ class DebugSmsInjectionTest {
         ignored: Boolean = false, textLimit: Boolean = false, parts: List<String> = listOf(text)) {
         configure(only, simplify)
         val actual = main { SpeechFormatter.choose(text, app.settings.snapshot()).text }
-        val expected = if (ignored || textLimit) null else if (only && simplify) {
+        val expected = if (ignored || textLimit) null else if (simplify && OtpExtractor.extract(text) != null) {
             val detected = OtpExtractor.extract(text)
             assertNotNull("$id reliable OTP required", detected)
             SpeechFormatter.choose(text, AppSettings(announcingEnabled = true)).text
@@ -235,12 +235,14 @@ class DebugSmsInjectionTest {
             val snapshot = main { app.settings.snapshot() }
             assertFalse(snapshot.otpSimplifyEnabled)
             main { app.settings.setSimplify(true) }
-            assertFalse(main { app.settings.snapshot().otpSimplifyEnabled })
+            assertTrue(main { app.settings.snapshot().otpSimplifyEnabled })
+            assertFalse(main { app.settings.snapshot().otpOnlyEnabled })
+            val independent = main { app.settings.snapshot() }
             val restored = main { SettingsRepository(PreferenceSettingsStore(app.prefs),
                 android.provider.Settings.Global.getInt(app.contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)).snapshot() }
-            assertTrue("Persisted settings must reload unchanged", snapshot == restored)
+            assertTrue("Persisted settings must reload unchanged", independent == restored)
             assertFalse(com.mxy1021.smsvoiceassistant.audio.RoutePolicy.matches("synthetic-target", listOf("other-target")))
-            emit("D00", "PASS", "DEFAULTS_RULE_DEPENDENCY_REAL_PREFERENCE_RELOAD_AND_IDENTITY_REJECTION")
+            emit("D00", "PASS", "DEFAULTS_INDEPENDENT_RULES_REAL_PREFERENCE_RELOAD_AND_IDENTITY_REJECTION")
         } finally { configure(before.otpOnlyEnabled, before.otpSimplifyEnabled) }
     }
 
@@ -306,9 +308,9 @@ class DebugSmsInjectionTest {
         }
     }
 
-    private fun activeChange(stop: Boolean) {
-        val id = if (stop) "L01.normalStop" else "R20.ruleChange"
-        configure(true, true)
+    private fun activeChange(stop: Boolean, simplifyWithFilterOff: Boolean = false) {
+        val id = if (stop) "L01.normalStop" else if (simplifyWithFilterOff) "V2.simplifyChange" else "R20.ruleChange"
+        configure(!simplifyWithFilterOff, true)
         audioCondition()?.let { emit(id, "SKIP", it); return }
         val saved = main { app.settings.snapshot() }
         val job = submit(DebugSmsFixtures.SHORT_OTP)
@@ -319,6 +321,7 @@ class DebugSmsInjectionTest {
             val changedAt = SystemClock.elapsedRealtime()
             main {
                 if (stop) app.setAnnouncingEnabled(false)
+                else if (simplifyWithFilterOff) app.settings.setSimplify(false)
                 else app.settings.setOtpOnly(false) // Exercise the generation gate, without calling cancel directly.
             }
             assertTrue("$id old playback must promptly terminate", waitUntil(1500) { job.done.isDone })
@@ -452,16 +455,23 @@ class DebugSmsInjectionTest {
             assertTrue("Open the real launcher through ADB after readiness; device must be unlocked",
                 waitUntil(15_000) { main { app.visible } })
             val selected = InstrumentationRegistry.getArguments().getString("fixture", "All")
-            val cases = if (selected == "All") listOf("Logic", "Otp", "OtpFull", "Normal", "Numbers", "Mixed",
+            val cases = if (selected == "All") listOf("Logic", "RuleMatrix", "Otp", "OtpFull", "Normal", "Numbers", "Mixed",
                 "OtpAmbiguous", "Long80", "Long81", "LongPcm", "Rapid", "Disabled", "Disconnected", "Focus", "Multipart",
-                "StopDuring", "RulesDuring", "TtsFailures", "FocusFailure", "FocusPermanent")
+                "StopDuring", "RulesDuring", "SimplifyDuring", "TtsFailures", "FocusFailure", "FocusPermanent")
                 else if (selected == "Long") listOf("Long80", "Long81", "LongPcm")
-                else if (selected == "Safety") listOf("StopDuring", "RulesDuring", "TtsFailures", "FocusFailure", "FocusPermanent")
+                else if (selected == "Safety") listOf("StopDuring", "RulesDuring", "SimplifyDuring", "TtsFailures", "FocusFailure", "FocusPermanent")
                 else listOf(selected)
             cases.forEach { case ->
                 try {
                     when (case) {
                         "Logic" -> contracts()
+                        "RuleMatrix" -> {
+                            listOf(true to true, true to false, false to true, false to false)
+                                .forEachIndexed { index, (only, simplify) ->
+                                    message("V2.S0${index + 1}.otp", DebugSmsFixtures.SHORT_OTP, only, simplify)
+                                    message("V2.S0${index + 1}.normal", DebugSmsFixtures.SHORT, only, simplify, ignored = only)
+                                }
+                        }
                         "Otp" -> message("D01", DebugSmsFixtures.OTP, true, true)
                         "OtpFull" -> {
                             message("D02", DebugSmsFixtures.OTP_FULL, true, false)
@@ -496,6 +506,7 @@ class DebugSmsInjectionTest {
                         "PauseDisconnect" -> focus("disconnect")
                         "StopDuring" -> activeChange(true)
                         "RulesDuring" -> activeChange(false)
+                        "SimplifyDuring" -> activeChange(false, simplifyWithFilterOff = true)
                         "TtsFailures" -> { controlledFailure(ControlledFailure.INIT); controlledFailure(ControlledFailure.SYNTHESIS) }
                         "FocusFailure" -> controlledFailure(ControlledFailure.FOCUS_REQUEST)
                         "FocusPermanent" -> permanentFocusLoss()
@@ -518,8 +529,7 @@ class DebugSmsInjectionTest {
         } finally {
             main {
                 app.session?.cancel()
-                app.settings.setOtpOnly(true); app.settings.setSimplify(original.otpSimplifyEnabled)
-                app.settings.setOtpOnly(original.otpOnlyEnabled)
+                app.settings.setOtpOnly(original.otpOnlyEnabled); app.settings.setSimplify(original.otpSimplifyEnabled)
                 app.setAnnouncingEnabled(original.announcingEnabled)
             }
             assertTrue("Original settings must be preserved", original == main { app.settings.snapshot() })
