@@ -55,7 +55,7 @@ class HeadsetMediaProbeTest {
                             val key = mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java) ?: return false
                             if (key.action == KeyEvent.ACTION_UP) keyUps++
                             instrumentation.sendStatus(2, Bundle().apply { putString("stream",
-                                "\nSVA_MEDIA_KEY code=${key.keyCode};action=${key.action};repeat=${key.repeatCount};sourceAuthenticated=false\n") })
+                                "\nSVA_MEDIA_KEY code=${key.keyCode};action=${key.action};repeat=${key.repeatCount};inputDevicePresent=${key.device != null};externalInput=${key.device?.isExternal};sourceAuthenticated=false\n") })
                             if (stopKey != null && key.keyCode == stopKey && key.action == KeyEvent.ACTION_UP && key.repeatCount == 0) {
                                 cancelled = true; app.session?.cancel(); return true
                             }

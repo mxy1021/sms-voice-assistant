@@ -29,7 +29,7 @@
 11. **新增Service或长期后台机制？** 没有。合并Manifest、Debug/Release产物检查均0 Service，无FGS、WorkManager、轮询、常驻媒体或AccessibilityService；联系人工作仅当前查询，超时放弃结果并取消，最多一项，不能保证不配合取消的系统Provider内部执行时间。
 12. **Manifest新增权限？** 仅可选android.permission.READ_CONTACTS。总共RECEIVE_SMS、BLUETOOTH_CONNECT、RECEIVE_BOOT_COMPLETED、READ_CONTACTS；无INTERNET、READ_SMS、通知监听或无障碍权限。
 13. **未完成测试？** 真实链接、混合码/无联系人、完整组合剩余两格、三档听感及失真、连续真实队列、长语音与超限真实SMS、Home/锁屏/静置/重启/断连/撤蓝牙/音乐通知回归、8.5秒B01～B12和真实finish/系统全周期、耳机M01～M05。详见[本轮测试计划](stage1.1-test-plan.md)及[待验收表](stage1.1-acceptance.md)。
-14. **Git与工作区？** 功能源代码已推送feature/v2-sms-speech-experience，代码基线5da72ad1bd46d35ee503d20879031ae35e15d45f；候选experiment/sms-budget-8500ms也独立推送，候选构建基线44bc07e99f00615eb86b797cdf063bfc3c6d20cd。最终文档提交SHA、远端一致性与干净工作区以最后核验和交付回复为准。不合并main、不改稳定分支/标签、不强推。
+14. **Git与工作区？** 功能源代码已推送feature/v2-sms-speech-experience，最终代码基线7bf1ee3ff95aa16d0baf3359da848cf9ef9b29c2（预算对比的共同基线仍为5da72ad）；候选experiment/sms-budget-8500ms也独立推送，候选构建基线44bc07e99f00615eb86b797cdf063bfc3c6d20cd。最终文档提交SHA、远端一致性与干净工作区以最后核验和交付回复为准。不合并main、不改稳定分支/标签、不强推。
 
 ## 实测技术边界与未解决事项
 
@@ -46,11 +46,11 @@ URL清理为明确http(s)、www和常见裸域名规则，不承诺识别所有�
 - androidTest：同目录`app-debug-androidTest.apk`，只含测试，不是生产APK。
 - 8.5秒实验：`D:/Projects/SMSVoiceAssistant/app/build/stage1.1-artifacts/experiment-8500/app-debug.apk`，只用于候选测试，禁止当作已验收版。
 - 各目录metadata.json记录对应代码提交、预算及SHA256；APK/脱敏运行证据位于忽略的build目录，不进入Git。
-- 使用同签名install -r保留数据；不卸载、清数据、伪造SMS_RECEIVED、强停冒充自然回收或自动授予联系人。已拉取手机安装APK并核验SHA256与正式8秒APK一致，完成恢复。
+- 使用同签名install -r保留数据；不卸载、清数据、伪造SMS_RECEIVED、强停冒充自然回收或自动授予联系人。实验结束时已拉取手机安装APK并核验与8秒恢复构建5da72ad的SHA256一致（d18d312f…），完成恢复。之后名称内号码防护已构建但为避免打断待回复的三档真实音量/C/D测试，尚未再次覆盖手机。最终APK（7729f62d…）需在该轮人工测试结束后更新，不能把恢复构建冒称最终APK。
 - 构建：`./gradlew.bat testDebugUnitTest assembleDebug assembleDebugAndroidTest assembleRelease lintDebug lintRelease`。
 - 产物隔离：`python scripts/Verify-DebugSmsIsolation.py`；真实计时只读：`python scripts/Measure-SmsBudget.py --label <唯一标签>`。
 
-GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/commit/5da72ad1bd46d35ee503d20879031ae35e15d45f)、[功能分支](https://github.com/mxy1021/sms-voice-assistant/tree/feature/v2-sms-speech-experience)、[8.5秒候选分支](https://github.com/mxy1021/sms-voice-assistant/tree/experiment/sms-budget-8500ms)。
+GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/commit/7bf1ee3ff95aa16d0baf3359da848cf9ef9b29c2)、[功能分支](https://github.com/mxy1021/sms-voice-assistant/tree/feature/v2-sms-speech-experience)、[8.5秒候选分支](https://github.com/mxy1021/sms-voice-assistant/tree/experiment/sms-budget-8500ms)。
 
 ## 修改文件清单（相对210a749）
 
@@ -93,3 +93,11 @@ GitHub：[功能代码提交](https://github.com/mxy1021/sms-voice-assistant/com
 - `scripts/Measure-SmsBudget.py`
 - `scripts/Test-Stage1Device.py`
 - `scripts/Verify-DebugSmsIsolation.py`
+
+## 最终构建指纹与当前人工交接
+
+- 最终代码/测试基线：7bf1ee3ff95aa16d0baf3359da848cf9ef9b29c2；末次文档提交另计。
+- 最终Debug APK SHA256：7729f62d2914ba36547f194eef6eb75350daf789a44b20d39ca16de6afc34b85。
+- 最终Release unsigned SHA256：1951a1ec497894c930b3757bdbaa37166eddb2553a572b1f4804f7fa28a73d3b。
+- 所有产物保留3 / 2.0.0-stage1，min/target/compile=33/34/36，包名/namespace/签名配置未修改。
+- 用户正在进行的三档真实听感及C/D补测尚未反馈、也未取得新真实事件，不写PASS。待反馈后继续最终8秒APK覆盖安装、耳机双击物理按键及剩余安全后台回归。本轮所有独立可做的源代码、构建、受控实验、文档与分支交付已完成，正式验收仍等待人工。
