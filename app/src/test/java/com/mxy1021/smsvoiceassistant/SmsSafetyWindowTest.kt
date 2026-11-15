@@ -12,8 +12,8 @@ class SmsSafetyWindowTest {
         assertFalse(SmsSafetyWindow.freshPdu(emptyList()))
     }
     @Test fun elapsedDeadlineSurvivesDelayedHandlerExecution() {
-        assertTrue(SmsSafetyWindow.withinBudget(1000, 8999))
-        assertFalse(SmsSafetyWindow.withinBudget(1000, 9000))
+        assertTrue(SmsSafetyWindow.withinBudget(1000, 1000 + SmsSafetyWindow.SESSION_BUDGET_MS - 1))
+        assertFalse(SmsSafetyWindow.withinBudget(1000, 1000 + SmsSafetyWindow.SESSION_BUDGET_MS))
         assertFalse(SmsSafetyWindow.withinBudget(1000, 300000))
         assertFalse(SmsSafetyWindow.withinBudget(1000, 999))
     }

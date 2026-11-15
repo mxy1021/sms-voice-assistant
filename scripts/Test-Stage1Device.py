@@ -87,14 +87,18 @@ class Device:
             self.shell("input", "swipe", str(width // 2), str(height // 4), str(width // 2), str(height * 4 // 5), "180")
 
     def node(self, label):
-        for _ in range(8):
+        switches = {"启用短信播报", "仅播报验证码", "精简验证码播报", "开机后恢复工作状态"}
+        for attempt in range(9):
             root = self.tree()
             for node in root.iter("node"):
                 if node.get("package") == PACKAGE and node.get("content-desc") == label and node.get("checkable") == "true":
                     return node
             for node in root.iter("node"):
-                if node.get("package") == PACKAGE and (node.get("text") == label or node.get("content-desc") == label):
+                if label not in switches and node.get("package") == PACKAGE and (node.get("text") == label or node.get("content-desc") == label):
                     return node
+            if attempt == 0:
+                self.top()
+                continue
             bounds = list(map(int, re.findall(r"\d+", next(root.iter("node")).get("bounds"))))
             self.shell("input", "swipe", str(bounds[2] // 2), str(bounds[3] * 3 // 4), str(bounds[2] // 2), str(bounds[3] // 3), "180")
         raise RuntimeError("Required UI control not found: " + label)

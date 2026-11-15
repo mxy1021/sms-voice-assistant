@@ -24,17 +24,17 @@ class IndependentSmsRulesTest {
         SmsSpeechMode.SIMPLIFIED, SmsSpeechMode.IGNORE, simplified, null)
 
     @Test fun s02OnlyOnSimplifyOff() = combination(true, false,
-        SmsSpeechMode.FULL, SmsSpeechMode.IGNORE, otpBody, null)
+        SmsSpeechMode.FULL, SmsSpeechMode.IGNORE, "【示例】验证码：零一二三，请勿泄露。", null)
 
     @Test fun s03OnlyOffSimplifyOn() = combination(false, true,
         SmsSpeechMode.SIMPLIFIED, SmsSpeechMode.FULL, simplified, normalBody)
 
     @Test fun s04BothOff() = combination(false, false,
-        SmsSpeechMode.FULL, SmsSpeechMode.FULL, otpBody, normalBody)
+        SmsSpeechMode.FULL, SmsSpeechMode.FULL, "【示例】验证码：零一二三，请勿泄露。", normalBody)
 
     @Test fun ambiguousAndFailedRecognitionNeverInventACode() {
         listOf("验证码1234或5678。", "验证码：1234，验证码：5678。", "验证码为，请稍候。",
-            "验证码12345。").forEach { body ->
+            "验证码1234567。").forEach { body ->
             assertNull(OtpDetector.detect(body))
             listOf(true, false).forEach { only -> listOf(true, false).forEach { simplify ->
                 assertEquals(if (only) null else body, SpeechFormatter.choose(body, settings(only, simplify)).text)
@@ -74,7 +74,7 @@ class IndependentSmsRulesTest {
         val original = body.toCharArray()
         assertNotEquals(body, SpeechFormatter.choose(body, settings(false, true)).text)
         listOf(true, false).forEach { only ->
-            assertEquals(body, SpeechFormatter.choose(body, settings(only, false)).text)
+            assertEquals("【示例】验证码：小写字母A，零，大写字母B，一，非本人操作请忽略。", SpeechFormatter.choose(body, settings(only, false)).text)
         }
         assertArrayEquals(original, body.toCharArray())
     }

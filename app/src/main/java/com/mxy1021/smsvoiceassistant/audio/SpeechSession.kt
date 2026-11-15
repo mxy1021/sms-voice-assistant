@@ -38,6 +38,8 @@ class SpeechSession(
     private var sink: ParcelFileDescriptor? = null
     private var focus: AudioFocusRequest? = null
     private var track: AudioTrack? = null
+    private val loudness = SessionLoudness(dependencies::createLoudness)
+    private val gainDb = app.settings.snapshot().speechGainDb
     private val worker = Executors.newSingleThreadExecutor()
     private class MemoryPcm : ByteArrayOutputStream() {
         fun clear() { buf.fill(0); reset() }
@@ -79,7 +81,7 @@ class SpeechSession(
         if (!SmsSafetyWindow.withinBudget(startElapsed, SystemClock.elapsedRealtime())) {
             stage = "elapsedRealtime预算超时：$next"
             mark("超时退出")
-            end("恢复执行时已超过8秒，丢弃在途语音，不延长广播")
+            end("恢复执行时已超过${SmsSafetyWindow.SESSION_BUDGET_MS}ms，丢弃在途语音，不延长广播")
             return false
         }
         return true
@@ -102,7 +104,7 @@ class SpeechSession(
     }
     private val timeout = Runnable {
         mark("Handler超时回调")
-        end("8 秒总预算超时；实际elapsed=${SystemClock.elapsedRealtime() - startElapsed}ms；合成请求=$synthesisRequested，onStart=$synthesisStarted，合成完成=$synthesisDone，播放完成=$playbackDone")
+        end("${SmsSafetyWindow.SESSION_BUDGET_MS}ms总预算超时；实际elapsed=${SystemClock.elapsedRealtime() - startElapsed}ms；合成请求=$synthesisRequested，onStart=$synthesisStarted，合成完成=$synthesisDone，播放完成=$playbackDone")
     }
     private val deviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
@@ -126,7 +128,7 @@ class SpeechSession(
         if (!alive("会话开始")) return
         record("speak调用", "false（严格文件合成/PCM，不调用 speak）")
         record("gain", focusMode)
-        log("原 PCM 焦点测试开始；模式=${if (focusMode == AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK) "A" else "B"}，gain=$focusMode；8 秒包含冷初始化")
+        log("原 PCM 焦点测试开始；模式=${if (focusMode == AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK) "A" else "B"}，gain=$focusMode；${SmsSafetyWindow.SESSION_BUDGET_MS}ms包含冷初始化")
         log("tts.speak=不调用；请求路径=synthesizeToFile(/dev/null) → PCM → 焦点 → AudioTrack；与直接 speak 不同")
         log("独立创建新 TTS，不复用兼容性实例；焦点回调及 stop/abandon 在本时序记录")
         // 包含蓝牙查询、冷启动合成和播放在内总计最多 8 秒。
@@ -299,7 +301,7 @@ class SpeechSession(
                 try { track?.pause() } catch (_: Exception) { end("临时焦点丢失时暂停语音失败"); return }
                 mark("语音临时暂停")
                 trace("pcmPaused", detail = "change=$change")
-                app.event("临时音频占用：本次语音暂停等待焦点，仍受8秒预算限制", background)
+                app.event("临时音频占用：本次语音暂停等待焦点，仍受${SmsSafetyWindow.SESSION_BUDGET_MS}ms预算限制", background)
             }
             SpeechFocusAction.RESUME -> {
                 if (!alive("临时焦点恢复")) return
@@ -339,7 +341,7 @@ class SpeechSession(
         pcmDuration = duration
         val elapsed = SystemClock.elapsedRealtime() - startElapsed
         if (duration == null || !PcmBudget.fits(duration, elapsed)) {
-            data.fill(0); end("完整音频超过5秒或剩余8秒预算不足，整条未播报"); return
+            data.fill(0); end("完整音频超过5秒或剩余${SmsSafetyWindow.SESSION_BUDGET_MS}ms预算不足，整条未播报"); return
         }
         record("PCM时长ms", duration)
         log("PCM 格式校验通过；当前才开始请求焦点")
@@ -375,6 +377,8 @@ class SpeechSession(
             .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(mask).setEncoding(encoding).build())
             .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(minimum, rate * channels / 5 * 2)).build()
         track = player
+        record("语音增强dB", gainDb)
+        record("语音增强生效", loudness.attach(player.audioSessionId, gainDb))
         mark("AudioTrack创建完成")
         record("AudioTrack.state", player.state)
         val preferred = player.setPreferredDevice(output)
@@ -394,6 +398,7 @@ class SpeechSession(
             record("实际路由", matched)
             if (!matched) { data.fill(0); end("实际播放路由无法确认，拒绝播报"); return }
             routeConfirmed = true
+            mark("实际蓝牙路由确认")
             if (!PcmBudget.fits(duration, SystemClock.elapsedRealtime() - startElapsed)) {
                 data.fill(0); end("路由检查后完整音频预算不足，整条未播报"); return
             }
@@ -484,6 +489,7 @@ class SpeechSession(
         if (track != null) log("调用 AudioTrack.stop/flush/release；播放完成前=${!playbackDone}；原因=$code")
         runCatching { track?.stop() }
         runCatching { track?.flush() }
+        loudness.release()
         runCatching { track?.release() }
         track = null
         val focusReleased = focus?.let {
@@ -503,6 +509,7 @@ class SpeechSession(
         if (receiverRegistered) runCatching { app.unregisterReceiver(disconnect) }
         synchronized(pcm) { pcm.clear() }
         worker.shutdownNow()
+        mark("音频资源释放完成")
         sms("TTS", when {
             playbackDone -> "合成和播放完成回调已到达；实际耳机听验待记录"
             synthesisStarted -> "TTS 合成已启动但播放未完成；失败阶段=$stage"

@@ -35,8 +35,9 @@ class ProbeApplication : Application() {
     val speaking = MutableStateFlow(false)
     fun setAnnouncingEnabled(enabled: Boolean) {
         settings.setEnabled(enabled)
-        if (!enabled) { session?.cancel(); foregroundFocus?.cancel() }
+        if (!enabled) { cancelSpeechWork(); foregroundFocus?.cancel() }
     }
+    fun cancelSpeechWork() { smsCoordinator.cancelWaiting(); session?.cancel() }
     val events = MutableStateFlow("尚未运行")
     val main = Handler(Looper.getMainLooper())
     var visible = false
@@ -47,8 +48,14 @@ class ProbeApplication : Application() {
     val audioModeResults = MutableStateFlow<Map<Int, AudioModeResult>>(emptyMap())
     private var audioSequence = 0
     private val smsReceiveElapsed = mutableMapOf<String, Long>()
+    // Active/queued deadlines must survive diagnostic-ring eviction during an SMS burst.
+    private val activeSmsDeadlines = mutableMapOf<String, Long>()
+    fun retainSmsDeadline(id: String, elapsed: Long) { activeSmsDeadlines[id] = elapsed }
+    fun releaseSmsDeadline(id: String) { activeSmsDeadlines.remove(id) }
     override fun onCreate() {
+        val createdAt = SystemClock.elapsedRealtime()
         super.onCreate()
+        Stage0Log.timing(null, "Application.onCreate入口", createdAt, null)
         settings.snapshot()
         Stage0Log.state("process", "Application.onCreate", "新进程实例；不是设备标识")
         val lastExit = runCatching { getSystemService(ActivityManager::class.java)
@@ -63,13 +70,13 @@ class ProbeApplication : Application() {
                 "keyguard=${getSystemService(KeyguardManager::class.java).isKeyguardLocked}；importance=${memory.importance}", id)
     }
     fun smsTime(id: String?, stage: String, atElapsed: Long = SystemClock.elapsedRealtime()) {
-        Stage0Log.timing(id, stage, atElapsed, id?.let { smsReceiveElapsed[it] })
+        Stage0Log.timing(id, stage, atElapsed, receivedAt(id))
         if (id != null) {
             updateSmsEvent(id, "t.$stage", atElapsed.toString())
-            smsReceiveElapsed[id]?.let { updateSmsEvent(id, "d.$stage", (atElapsed - it).toString()) }
+            receivedAt(id)?.let { updateSmsEvent(id, "d.$stage", (atElapsed - it).toString()) }
         }
     }
-    fun receivedAt(id: String?) = id?.let { smsReceiveElapsed[it] }
+    fun receivedAt(id: String?) = id?.let { activeSmsDeadlines[it] ?: smsReceiveElapsed[it] }
     val smsEvents by lazy {
         val restored = runCatching {
             val array = JSONArray(prefs.getString("smsEvents", "[]"))
@@ -125,8 +132,10 @@ class ProbeApplication : Application() {
         Stage0Log.state("sms", field, value, id)
         timeline.add("[$id] $field=$value")
     }
-    fun finishSmsEvent(id: String) {
-        smsTime(id, "PendingResult.finish")
+    fun finishSmsEvent(id: String, finishStart: Long = SystemClock.elapsedRealtime(), finishEnd: Long = SystemClock.elapsedRealtime()) {
+        smsTime(id, "PendingResult.finish调用", finishStart)
+        smsTime(id, "PendingResult.finish返回", finishEnd)
+        smsTime(id, "PendingResult.finish", finishEnd)
         updateSmsEvent(id, "接收器finish", "已调用，时间=${System.currentTimeMillis()}")
     }
     fun startAudioModeTest(selectedMode: Int) {
@@ -206,7 +215,7 @@ class ProbeApplication : Application() {
     val prefs by lazy { getSharedPreferences("stage0", MODE_PRIVATE) }
     var target: String?
         get() = settings.snapshot().selectedBluetoothDevice
-        set(value) { settings.selectDevice(value); session?.cancel(); foregroundFocus?.cancel() }
+        set(value) { settings.selectDevice(value); cancelSpeechWork(); foregroundFocus?.cancel() }
     var mode: Int
         get() = prefs.getInt("focusMode", 3)
         set(value) { prefs.edit().putInt("focusMode", value).apply() }
@@ -243,6 +252,7 @@ class ProbeApplication : Application() {
             if (fromSms) smsFinished()
             result(outcome)
             finished()
+            smsCoordinator.drainWaiting()
         }
         session = next
         speaking.value = true

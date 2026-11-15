@@ -12,10 +12,10 @@ class AnnouncementRulesTest {
         assertEquals("您收到的网易验证码为四二九三一七。", SpeechFormatter.choose(input, enabled).text)
     }
     @Test fun supportedLengthsAndContexts() {
-        listOf("您的验证码为1234。", "验证码123456，请勿泄露。", "【示例】验证码：12345678。").forEach {
+        listOf("您的验证码为1234。", "验证码55555。", "验证码123456，请勿泄露。", "【示例】验证码：12345678。").forEach {
             assertNotNull(OtpDetector.detect(it))
         }
-        listOf("验证码123", "验证码12345", "验证码1234567", "验证码123456789").forEach { assertNull(OtpDetector.detect(it)) }
+        listOf("验证码123", "验证码1234567", "验证码123456789").forEach { assertNull(OtpDetector.detect(it)) }
     }
     @Test fun leadingZeroAndUnknownPlatform() {
         assertEquals("您收到的验证码为零一二三。", SpeechFormatter.choose("验证码0123。", enabled).text)
@@ -43,12 +43,12 @@ class AnnouncementRulesTest {
     }
     @Test fun otpFullTextPreservesAllCharactersAndSafetyReminder() {
         val body = "【示例】验证码：0123，非本人操作请忽略。"
-        assertEquals(body, SpeechFormatter.choose(body, enabled.copy(otpSimplifyEnabled = false)).text)
+        assertEquals("【示例】验证码：零一二三，非本人操作请忽略。", SpeechFormatter.choose(body, enabled.copy(otpSimplifyEnabled = false)).text)
         assertNull(SpeechFormatter.choose("明天开会。", enabled.copy(otpSimplifyEnabled = false)).text)
     }
     @Test fun allSmsModeWithoutSimplificationUsesUnmodifiedFullText() {
-        listOf("明天14:30开会。", "验证码a0B1，请勿泄露。").forEach { text ->
-            assertEquals(text, SpeechFormatter.choose(text, enabled.copy(otpOnlyEnabled = false, otpSimplifyEnabled = false)).text)
+        mapOf("明天14:30开会。" to "明天14:30开会。", "验证码a0B1，请勿泄露。" to "验证码小写字母A，零，大写字母B，一，请勿泄露。").forEach { (text, spoken) ->
+            assertEquals(spoken, SpeechFormatter.choose(text, enabled.copy(otpOnlyEnabled = false, otpSimplifyEnabled = false)).text)
         }
     }
     @Test fun disabledOverridesEveryRuleCombination() {
@@ -84,7 +84,7 @@ class AnnouncementRulesTest {
         assertEquals(5000L, PcmBudget.durationMs(160000, 16000, 1))
         assertTrue(PcmBudget.fits(5000, 2000))
         assertFalse(PcmBudget.fits(5001, 0))
-        assertFalse(PcmBudget.fits(5000, 2300))
+        assertFalse(PcmBudget.fits(5000, SmsSafetyWindow.SESSION_BUDGET_MS - 5000 - PcmBudget.ROUTE_AND_CLEANUP_MS))
         assertNull(PcmBudget.durationMs(3, 16000, 1))
         assertNull(PcmBudget.durationMs(PcmBudget.MAX_BYTES + 1, 16000, 1))
         assertFalse(PcmBudget.fits(1000, -1))

@@ -17,7 +17,8 @@ data class AppSettings(
     val otpSimplifyEnabled: Boolean = true,
     val bootRestoreEnabled: Boolean = false,
     val selectedBluetoothDevice: String? = null,
-    val setupCompleted: Boolean = false
+    val setupCompleted: Boolean = false,
+    val speechGainDb: Int = 0
 )
 
 data class SpeechPermit(val generation: Long, val fromSms: Boolean)
@@ -36,7 +37,8 @@ class SettingsRepository(private val store: SettingsStore, private val bootCount
         if (bootCount >= 0 && lastBoot != bootCount && !restore) enabled = false
         mutable = MutableStateFlow(AppSettings(enabled,
             store.boolean("otpOnlyEnabled", true), store.boolean("otpSimplifyEnabled", true),
-            restore, store.string("target"), store.boolean("setupCompleted", false)))
+            restore, store.string("target"), store.boolean("setupCompleted", false),
+            store.int("speechGainDb", 0).takeIf { it in setOf(0, 3, 6) } ?: 0))
         store.write(mapOf("settingsVersion" to 1, "announcingEnabled" to enabled,
             "stage1BootCount" to bootCount))
     }
@@ -49,7 +51,7 @@ class SettingsRepository(private val store: SettingsStore, private val bootCount
         store.write(mapOf("announcingEnabled" to next.announcingEnabled,
             "otpOnlyEnabled" to next.otpOnlyEnabled, "otpSimplifyEnabled" to next.otpSimplifyEnabled,
             "bootRestoreEnabled" to next.bootRestoreEnabled, "target" to next.selectedBluetoothDevice,
-            "setupCompleted" to next.setupCompleted))
+            "setupCompleted" to next.setupCompleted, "speechGainDb" to next.speechGainDb))
         mutable.value = next
     }
     fun setEnabled(value: Boolean) = update { it.copy(announcingEnabled = value,
@@ -57,6 +59,10 @@ class SettingsRepository(private val store: SettingsStore, private val bootCount
     fun setOtpOnly(value: Boolean) = update { it.copy(otpOnlyEnabled = value) }
     fun setSimplify(value: Boolean) = update { it.copy(otpSimplifyEnabled = value) }
     fun setBootRestore(value: Boolean) = update { it.copy(bootRestoreEnabled = value) }
+    fun setSpeechGain(value: Int) {
+        require(value in setOf(0, 3, 6))
+        update { it.copy(speechGainDb = value) }
+    }
     fun selectDevice(value: String?) = update { it.copy(selectedBluetoothDevice = value, setupCompleted = value != null) }
     fun onBoot() {
         // For known boot count, init already reconciled this boot before any receiver/UI.

@@ -13,7 +13,7 @@ class DebugSmsContractTest {
     }
     @Test fun suppliedOtpFullRetainsExpiryAndWarning() {
         val body = "【测试平台】您的验证码为429317，有效期五分钟，请勿告知他人。"
-        assertEquals(body, SpeechFormatter.choose(body, on.copy(otpSimplifyEnabled = false)).text)
+        assertEquals("【测试平台】您的验证码为四二九三一七，有效期五分钟，请勿告知他人。", SpeechFormatter.choose(body, on.copy(otpSimplifyEnabled = false)).text)
     }
     @Test fun suppliedNormalAndOrderAreNotOtp() {
         listOf("今天下午三点开会，请记得带上资料。", "您的订单金额为129元，预计18点送达，订单号202611110001。").forEach {

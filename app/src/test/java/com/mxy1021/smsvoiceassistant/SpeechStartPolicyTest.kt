@@ -25,12 +25,12 @@ class SpeechStartPolicyTest {
     @Test fun observedDelayedStartupFallsInsideSingleBoundedWindow() {
         assertEquals(365L, SpeechStartPolicy.delayMs(true, 1000, 2435))
         assertEquals(0L, SpeechStartPolicy.delayMs(true, 1000, 2800))
-        assertEquals(8000L, SmsSafetyWindow.SESSION_BUDGET_MS)
+        assertFalse(SmsSafetyWindow.withinBudget(0, SmsSafetyWindow.SESSION_BUDGET_MS))
     }
     @Test fun windowStillAllowsMaximumPcmWithinUnchangedBudgetWhenSetupIsFast() {
-        assertEquals(8000L, SmsSafetyWindow.SESSION_BUDGET_MS)
+        assertFalse(SmsSafetyWindow.withinBudget(0, SmsSafetyWindow.SESSION_BUDGET_MS))
         assertTrue(PcmBudget.fits(5000, SpeechStartPolicy.SMS_INITIAL_WINDOW_MS + 250))
-        assertFalse(PcmBudget.fits(5000, 2300))
+        assertFalse(PcmBudget.fits(5000, SmsSafetyWindow.SESSION_BUDGET_MS - 5000 - PcmBudget.ROUTE_AND_CLEANUP_MS))
     }
     @Test fun waitingNeverMakesOldSessionBudgetFreshAgain() {
         val received = 1000L

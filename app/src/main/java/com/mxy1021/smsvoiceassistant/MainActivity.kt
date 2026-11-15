@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
         val currentRevision = revision
         val sms = remember(currentRevision) { granted(Manifest.permission.RECEIVE_SMS) }
         val bluetooth = remember(currentRevision) { granted(Manifest.permission.BLUETOOTH_CONNECT) }
+        val contacts = remember(currentRevision) { granted(Manifest.permission.READ_CONTACTS) }
         var choosing by remember { mutableStateOf(false) }
         val selectedName = devices.firstOrNull { matches(it, settings.selectedBluetoothDevice) }?.let { deviceName(it) }
             ?: if (settings.selectedBluetoothDevice == null) "尚未选择耳机" else "已保存目标耳机（名称暂不可用）"
@@ -164,11 +165,11 @@ class MainActivity : ComponentActivity() {
             }
             Section("短信播报规则") {
                 Toggle("仅播报验证码", "开启后，无法可靠识别的短信将忽略。", settings.otpOnlyEnabled) {
-                    app.settings.setOtpOnly(it); app.session?.cancel()
+                    app.settings.setOtpOnly(it); app.cancelSpeechWork()
                 }
-                Toggle("精简验证码播报", "识别到验证码时只读平台和验证码；关闭则读原文。此开关独立保存。",
+                Toggle("精简验证码播报", "识别到验证码时只读平台和验证码；关闭则读联系人名称及清理后的全文。此开关独立保存。",
                     settings.otpSimplifyEnabled) {
-                    app.settings.setSimplify(it); app.session?.cancel()
+                    app.settings.setSimplify(it); app.cancelSpeechWork()
                 }
                 Text(when {
                     settings.otpOnlyEnabled && settings.otpSimplifyEnabled -> "当前：验证码精简播报，普通短信忽略"
@@ -176,8 +177,20 @@ class MainActivity : ComponentActivity() {
                     settings.otpSimplifyEnabled -> "当前：验证码精简播报，普通短信全文播报"
                     else -> "当前：验证码和普通短信均全文播报"
                 }, style = MaterialTheme.typography.bodyMedium)
-                Text("全文最多80个字符，完整语音最多5秒，且须满足8秒总预算。超限整条拒绝并显示状态，不截断。较长全文暂不支持。",
+                Text("全文最多80个字符，完整语音最多5秒，且须满足${com.mxy1021.smsvoiceassistant.sms.SmsSafetyWindow.SESSION_BUDGET_MS}ms总预算。超限整条拒绝并显示状态，不截断。较长全文暂不支持。",
                     style = MaterialTheme.typography.bodySmall)
+            }
+            Section("语音音量增强") {
+                Text("仅增强本次语音，不改变系统媒体音量。默认原始音量。")
+                listOf(0 to "原始（0dB）", 3 to "轻度增强（+3dB）", 6 to "较强增强（+6dB）").forEach { (gain, label) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = settings.speechGainDb == gain, onClick = {
+                            app.settings.setSpeechGain(gain); app.cancelSpeechWork()
+                        }, modifier = Modifier.semantics { contentDescription = label })
+                        Text(label)
+                    }
+                }
+                Text("请从原始音量开始比较；设备不支持时使用原始音频。增强可能影响听感，请避免过高音量。", style = MaterialTheme.typography.bodySmall)
             }
             Section("蓝牙设备") {
                 Text(selectedName, style = MaterialTheme.typography.titleMedium)
@@ -192,13 +205,18 @@ class MainActivity : ComponentActivity() {
             Section("权限和系统设置") {
                 Text("短信权限：${if (sms) "已授予" else "未授予"}")
                 Text("蓝牙权限：${if (bluetooth) "已授予" else "未授予"}")
+                Text("联系人权限（可选）：${if (contacts) "已授予" else "未授予"}")
+                if (!contacts) OutlinedButton(onClick = {
+                    permissions.launch(arrayOf(Manifest.permission.READ_CONTACTS))
+                }) { Text("允许查询短信发信人名称") }
+                Text("仅按当前短信号码精确查询，不保存联系人；未授权或无法可靠匹配时只读正文，不朗读发信人号码。", style = MaterialTheme.typography.bodySmall)
                 if (!sms || !bluetooth) Button(onClick = {
                     permissions.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.BLUETOOTH_CONNECT))
                 }) { Text("申请必要权限") }
                 OutlinedButton(onClick = ::openAppSettings) { Text("应用权限设置") }
                 Text("拒绝授权后可从系统设置手动授权；短信权限还受安装器限制。返回本页会重新检查。", style = MaterialTheme.typography.bodySmall)
                 Toggle("开机后恢复工作状态", "开启：恢复上次启用/暂停状态。关闭：重启后暂停。", settings.bootRestoreEnabled) {
-                    app.settings.setBootRestore(it); app.session?.cancel()
+                    app.settings.setBootRestore(it); app.cancelSpeechWork()
                 }
                 OutlinedButton(onClick = ::openAppSettings) { Text("后台运行设置") }
                 Text("vivo OriginOS 7：请手动检查“允许后台高耗电”。阶段0测试中这是后台及时接收的重要条件，可能增加耗电。应用无法读取该设置：请手动确认。")
@@ -207,7 +225,7 @@ class MainActivity : ComponentActivity() {
             Section("语音测试") {
                 Text("固定文本：${SpeechFormatter.TEST_TEXT}")
                 Button(onClick = { app.speak(SpeechFormatter.TEST_TEXT, false) }, enabled = bluetooth && routeReady && !speaking) { Text("测试耳机语音") }
-                if (speaking) OutlinedButton(onClick = { app.session?.cancel() }) { Text("取消本次播报") }
+                if (speaking) OutlinedButton(onClick = { app.cancelSpeechWork() }) { Text("取消本次播报") }
                 Text("离线中文，指定耳机，音乐可降低音量。完成回调后仍需你确认实际听感。", style = MaterialTheme.typography.bodySmall)
                 Text("最近处理状态：$event")
             }

@@ -77,7 +77,10 @@ class DebugSmsInjectionTest {
             val detected = OtpExtractor.extract(text)
             assertNotNull("$id reliable OTP required", detected)
             SpeechFormatter.choose(text, AppSettings(announcingEnabled = true)).text
-        } else text
+        } else if (OtpExtractor.extract(text) != null) {
+            val otp = OtpExtractor.extract(text)!!
+            SmsTextCleaner.clean(text.replaceRange(otp.codeRange, SpeechFormatter.spokenCode(otp.code)))
+        } else SmsTextCleaner.clean(text)
         if (!main { app.settings.snapshot().announcingEnabled }) {
             val r = await(submit(text, parts))
             assertEquals(SmsDisposition.REJECTED, r.disposition)
@@ -125,12 +128,12 @@ class DebugSmsInjectionTest {
             }
         }
         val results = jobs.map(::await)
-        assertEquals(2, results.count { it.disposition == SmsDisposition.BUSY })
+        assertEquals(0, results.count { it.disposition == SmsDisposition.BUSY })
         assertTrue(idle())
         assertTrue(results.all { it.speech?.focusReleased != false })
         val first = results.first()
         emit("D10", if (first.disposition == SmsDisposition.COMPLETED) "MANUAL_REQUIRED" else "FAIL",
-            "TWO_OVERLAPPING_INPUTS_REJECTED_BUSY;FIRST_TERMINATED", first)
+            "NON_PREEMPTIVE_QUEUE;ALL_TERMINATED_WITH_ORIGINAL_DEADLINES", first)
     }
     private fun disabled() {
         val enabled = main { app.settings.snapshot().announcingEnabled }
