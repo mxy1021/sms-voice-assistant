@@ -52,16 +52,48 @@ class LoudnessAuditDeviceTest {
                 override fun onStop(id: String, interrupted: Boolean) { listener?.onStop(id, interrupted) }
             })
     }
-    @Test fun measureFixedOriginalPhrasesAtZeroGain() {
+    @Test fun measureProcessedPhrasesAtZeroGain() = measure(listOf(0), true)
+    @Test fun measureFinalGains() = measure(SpeechGain.levels, false)
+    @Test fun maximumPcmProcessingHasBoundedLatencyWithoutPlayback() {
+        val data = ByteArray(960000) // Exactly 5s, 48kHz stereo; never submitted to a track.
+        try {
+            for (frame in 0 until 240000) for (ch in 0..1) {
+                val value = ((sin(2*PI*1370*frame/48000)*.65 + sin(2*PI*11170*frame/48000)*.25)*32767).roundToInt()
+                val i = (frame*2+ch)*2; data[i] = value.toByte(); data[i+1] = (value shr 8).toByte()
+            }
+            val start = SystemClock.elapsedRealtime()
+            SpeechPcmProcessor.process(data,48000,2,9)
+            val elapsed = SystemClock.elapsedRealtime()-start
+            val stats = FixedPcmAudit.measure(data,48000,2)
+            assertEquals(0,stats.getInt("clippingCount"))
+            assertTrue(stats.getDouble("truePeakEstimateDbfs") <= -1.19)
+            assertTrue("Processing must fit existing reserve on this device: ${elapsed}ms",elapsed < 700)
+            instrumentation.sendStatus(2,Bundle().apply { putString("stream",
+                "\nSVA_LOUDNESS_AUDIT worstCaseBytes=960000;processingMs=$elapsed;clipping=0;pcmMs=5000;playback=false\n") })
+        } finally { data.fill(0) }
+    }
+    private fun measure(gains: List<Int>, threePhrases: Boolean) {
         assumeTrue(main { app.smsCoordinator.preflight() == null && app.session == null })
         val original = main { app.settings.snapshot() }
         val manager = app.getSystemService(AudioManager::class.java)
         val phrases = listOf("晚上七点见。", "验证码，零零九八一。", "短信语音测试，完整播放。")
         try {
-            main { app.settings.setSpeechGain(0) }
-            phrases.forEachIndexed { index, text ->
+            gains.forEach { gain ->
+            main { app.settings.setSpeechGain(gain) }
+            (if (threePhrases) phrases else listOf(phrases[2])).forEachIndexed { index, text ->
                 var capture: Capture? = null
+                var processed: ByteArray? = null
+                var dsp: SpeechPcmProcessor.Result? = null
+                var processingMs = 0L
                 val deps = object : SpeechDependencies {
+                    override fun processPcm(data: ByteArray, rate: Int, channels: Int, gainDb: Int,
+                                            cancelled: () -> Boolean): SpeechPcmProcessor.Result {
+                        val began = SystemClock.elapsedRealtime()
+                        return super.processPcm(data, rate, channels, gainDb, cancelled).also {
+                            processingMs = SystemClock.elapsedRealtime()-began
+                            dsp = it; processed = data.clone()
+                        }
+                    }
                     override fun createTts(context: Context, initialized: (Int) -> Unit): TextToSpeech =
                         Capture(context, initialized).also { capture = it }
                 }
@@ -90,12 +122,22 @@ class LoudnessAuditDeviceTest {
                 val engine = capture!!
                 val bytes = synchronized(engine.raw) { engine.raw.toByteArray().also { engine.raw.reset() } }
                 try {
-                    val stats = FixedPcmAudit.measure(bytes, engine.rate, engine.channels)
-                    stats.put("sample", "A0${index + 1}").put("source", "FIXED_TTS_NOT_SMS")
-                        .put("gainDb", 0).put("encoding", engine.encoding).put("track", attributes)
+                    val output = processed!!
+                    val stats = FixedPcmAudit.measure(output, engine.rate, engine.channels)
+                    stats.put("sample", if (threePhrases) "A0${index + 1}" else "A03").put("source", "FIXED_TTS_NOT_SMS")
+                        .put("gainDb", gain).put("encoding", engine.encoding).put("track", attributes)
+                        .put("original", FixedPcmAudit.measure(bytes, engine.rate, engine.channels))
+                        .put("processingMs", processingMs).put("baseGainDb", dsp!!.baseGainDb)
+                        .put("minimumLimiterGain", dsp!!.minimumLimiterGain).put("finalCorrectionDb", dsp!!.finalCorrectionDb)
                         .put("streamVolumeBefore", before).put("streamVolumeAfter", manager.getStreamVolume(AudioManager.STREAM_MUSIC))
+                    assertEquals(bytes.size, output.size)
+                    assertEquals(0, stats.getInt("clippingCount"))
+                    assertTrue(stats.getDouble("truePeakEstimateDbfs") <= -1.19)
+                    assertEquals(before, manager.getStreamVolume(AudioManager.STREAM_MUSIC))
+                    output.fill(0)
                     instrumentation.sendStatus(2, Bundle().apply { putString("stream", "\nSVA_LOUDNESS_AUDIT $stats\n") })
-                } finally { bytes.fill(0) }
+                } finally { bytes.fill(0); processed?.fill(0) }
+            }
             }
         } finally { main { app.session?.cancel(); app.settings.setSpeechGain(original.speechGainDb) } }
         assertEquals(original, main { app.settings.snapshot() })

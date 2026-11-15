@@ -2,6 +2,13 @@ package com.mxy1021.smsvoiceassistant.settings
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.mxy1021.smsvoiceassistant.audio.SpeechGain
+
+enum class DisplayMode(val code: Int, val label: String) {
+    SYSTEM(0, "跟随系统"), LIGHT(1, "普通模式（白色）"), DARK(2, "深色模式（黑色）");
+    fun dark(systemDark: Boolean) = when (this) { SYSTEM -> systemDark; LIGHT -> false; DARK -> true }
+    companion object { fun fromCode(code: Int) = entries.firstOrNull { it.code == code } ?: SYSTEM }
+}
 
 /** One source of truth; legacy target remains at its original key. No message data. */
 interface SettingsStore {
@@ -18,7 +25,8 @@ data class AppSettings(
     val bootRestoreEnabled: Boolean = false,
     val selectedBluetoothDevice: String? = null,
     val setupCompleted: Boolean = false,
-    val speechGainDb: Int = 0
+    val speechGainDb: Int = 0,
+    val displayMode: DisplayMode = DisplayMode.SYSTEM
 )
 
 data class SpeechPermit(val generation: Long, val fromSms: Boolean)
@@ -33,25 +41,30 @@ class SettingsRepository(private val store: SettingsStore, private val bootCount
         var enabled = store.boolean("announcingEnabled", false)
         val restore = store.boolean("bootRestoreEnabled", false)
         val lastBoot = store.int("stage1BootCount", -1)
+        val storedGain = store.int("speechGainDb", 0)
+        val restoredGain = SpeechGain.restored(storedGain)
         // Detect a reboot even when OEM delays BOOT_COMPLETED until after an SMS.
         if (bootCount >= 0 && lastBoot != bootCount && !restore) enabled = false
         mutable = MutableStateFlow(AppSettings(enabled,
             store.boolean("otpOnlyEnabled", true), store.boolean("otpSimplifyEnabled", true),
             restore, store.string("target"), store.boolean("setupCompleted", false),
-            store.int("speechGainDb", 0).takeIf { it in setOf(0, 3, 6) } ?: 0))
+            restoredGain,
+            DisplayMode.fromCode(store.int("displayMode", 0))))
         store.write(mapOf("settingsVersion" to 1, "announcingEnabled" to enabled,
             "stage1BootCount" to bootCount))
+        if (restoredGain != storedGain) store.write(mapOf("speechGainDb" to restoredGain))
     }
 
     fun snapshot(): AppSettings = synchronized(lock) { mutable.value }
-    private fun update(change: (AppSettings) -> AppSettings) = synchronized(lock) {
+    private fun update(invalidateSpeech: Boolean = true, change: (AppSettings) -> AppSettings) = synchronized(lock) {
         val next = change(mutable.value)
         if (next == mutable.value) return@synchronized
-        generation++ // In-flight text is never played under a different configuration.
+        if (invalidateSpeech) generation++ // Display-only changes do not cancel SMS/audio.
         store.write(mapOf("announcingEnabled" to next.announcingEnabled,
             "otpOnlyEnabled" to next.otpOnlyEnabled, "otpSimplifyEnabled" to next.otpSimplifyEnabled,
             "bootRestoreEnabled" to next.bootRestoreEnabled, "target" to next.selectedBluetoothDevice,
-            "setupCompleted" to next.setupCompleted, "speechGainDb" to next.speechGainDb))
+            "setupCompleted" to next.setupCompleted, "speechGainDb" to next.speechGainDb,
+            "displayMode" to next.displayMode.code))
         mutable.value = next
     }
     fun setEnabled(value: Boolean) = update { it.copy(announcingEnabled = value,
@@ -60,9 +73,10 @@ class SettingsRepository(private val store: SettingsStore, private val bootCount
     fun setSimplify(value: Boolean) = update { it.copy(otpSimplifyEnabled = value) }
     fun setBootRestore(value: Boolean) = update { it.copy(bootRestoreEnabled = value) }
     fun setSpeechGain(value: Int) {
-        require(value in setOf(0, 3, 6))
+        require(value in SpeechGain.levels)
         update { it.copy(speechGainDb = value) }
     }
+    fun setDisplayMode(value: DisplayMode) = update(invalidateSpeech = false) { it.copy(displayMode = value) }
     fun selectDevice(value: String?) = update { it.copy(selectedBluetoothDevice = value, setupCompleted = value != null) }
     fun onBoot() {
         // For known boot count, init already reconciled this boot before any receiver/UI.

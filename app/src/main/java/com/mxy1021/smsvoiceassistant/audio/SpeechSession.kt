@@ -37,7 +37,6 @@ class SpeechSession(
     private var sink: ParcelFileDescriptor? = null
     private var focus: AudioFocusRequest? = null
     private var track: AudioTrack? = null
-    private val loudness = SessionLoudness(dependencies::createLoudness)
     private val gainDb = app.settings.snapshot().speechGainDb
     private val worker = Executors.newSingleThreadExecutor()
     private class MemoryPcm : ByteArrayOutputStream() {
@@ -268,7 +267,7 @@ class SpeechSession(
                     synthesisDone = true
                     log("onDone：文件合成完成，PCM字节数=${synchronized(pcm) { pcm.size() }}；接下来才申请焦点与播放")
                     record("onDone", "已收到（文件合成，尚不代表实际播放完成）")
-                    preparePlayback(output)
+                    processPcm(output)
                 } catch (_: Exception) { end("音频播放初始化失败") }
             }
         }
@@ -281,6 +280,39 @@ class SpeechSession(
     private fun permitted() = dependencies.permissionGranted(app, Manifest.permission.BLUETOOTH_CONNECT)
     private fun matches(device: AudioDeviceInfo?) = permitted() && device != null &&
         BluetoothProbe.bluetooth(device) && RoutePolicy.matches(target, listOf(device.address))
+
+    private fun processPcm(output: AudioDeviceInfo) {
+        val data = synchronized(pcm) { pcm.toByteArray().also { pcm.clear() } }
+        val duration = PcmBudget.durationMs(data.size, rate, channels)
+        if (encoding != AudioFormat.ENCODING_PCM_16BIT || rate !in 8000..48000 || channels !in 1..2 ||
+            pcmOverflow || duration == null || !PcmBudget.fits(duration, SystemClock.elapsedRealtime()-startElapsed)) {
+            data.fill(0); end("完整PCM格式、长度或剩余预算不符合要求，整条拒绝"); return
+        }
+        stage = "PCM响度处理"
+        mark("PCM响度处理开始")
+        worker.execute {
+            var transferred = false
+            try {
+                val began = SystemClock.elapsedRealtime()
+                val result = dependencies.processPcm(data, rate, channels, gainDb) { ended }
+                val completed = SystemClock.elapsedRealtime()
+                if (!ended) {
+                    transferred = main.post {
+                        if (!alive("PCM响度处理完成")) data.fill(0)
+                        else {
+                            playbackPcm = data
+                            mark("PCM响度处理完成", completed)
+                            record("PCM处理耗时ms", completed-began)
+                            record("基础响度增益dB", result.baseGainDb)
+                            record("峰值保护最小倍率", result.minimumLimiterGain)
+                            try { preparePlayback(output) } catch (_: Exception) { end("音频播放初始化失败") }
+                        }
+                    }
+                }
+            } catch (_: Exception) { main.post { if (!ended) end("PCM响度处理取消或失败，整条拒绝") } }
+            finally { if (!transferred) data.fill(0) }
+        }
+    }
 
     private fun preparePlayback(output: AudioDeviceInfo) {
         val delay = SpeechStartPolicy.delayMs(fromSms, startElapsed, SystemClock.elapsedRealtime())
@@ -349,8 +381,7 @@ class SpeechSession(
     private fun playChecked(output: AudioDeviceInfo) {
         if (!alive("PCM播放准备")) return
         stage = "PCM 格式校验"
-        val data = synchronized(pcm) { pcm.toByteArray().also { pcm.clear() } }
-        playbackPcm = data
+        val data = playbackPcm ?: return
         totalPcmBytes = data.size
         if (rate !in 8000..48000 || channels !in 1..2 ||
             encoding != AudioFormat.ENCODING_PCM_16BIT || data.isEmpty() || pcmOverflow) {
@@ -397,7 +428,7 @@ class SpeechSession(
             .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(maxOf(minimum, rate * channels / 5 * 2)).build()
         track = player
         record("语音增强dB", gainDb)
-        record("语音增强生效", loudness.attach(player.audioSessionId, gainDb))
+        record("语音增强生效", "PCM独立处理，不叠加AudioEffect")
         mark("AudioTrack创建完成")
         record("AudioTrack.state", player.state)
         val preferred = player.setPreferredDevice(output)
@@ -514,7 +545,6 @@ class SpeechSession(
         val stopped = runCatching { track?.stop(); true }.getOrDefault(false)
         if (track != null) { mark("AudioTrack停止完成"); record("AudioTrack停止调用成功", stopped) }
         runCatching { track?.flush() }
-        loudness.release()
         if (track != null) mark("AudioTrack释放开始")
         val trackReleased = runCatching { track?.release(); true }.getOrDefault(false)
         if (track != null) { mark("AudioTrack释放完成"); record("AudioTrack释放调用成功", trackReleased) }

@@ -7,19 +7,11 @@ import android.speech.tts.TextToSpeech
 
 /** Platform boundary. Production always uses the default implementation; no runtime selector. */
 interface SpeechDependencies {
+    fun processPcm(data: ByteArray, rate: Int, channels: Int, gainDb: Int,
+                   cancelled: () -> Boolean): SpeechPcmProcessor.Result =
+        SpeechPcmProcessor.process(data, rate, channels, gainDb, cancelled)
     fun permissionGranted(context: Context, permission: String): Boolean =
         context.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    fun createLoudness(sessionId: Int): LoudnessEffect {
-        require(sessionId > 0) // Never attach an effect to the global output mix (session 0).
-        val effect = android.media.audiofx.LoudnessEnhancer(sessionId)
-        return object : LoudnessEffect {
-            override fun configure(gainMb: Int) {
-                effect.setTargetGain(gainMb)
-                check(effect.setEnabled(true) == android.media.audiofx.AudioEffect.SUCCESS)
-            }
-            override fun release() = effect.release()
-        }
-    }
     fun createTts(context: Context, initialized: (Int) -> Unit): TextToSpeech =
         TextToSpeech(context) { initialized(it) }
     fun requestFocus(audio: AudioManager, request: AudioFocusRequest): Int = audio.requestAudioFocus(request)

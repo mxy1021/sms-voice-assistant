@@ -54,9 +54,9 @@ class SmsQueueDeviceTest {
         val results = bodies.map { submit(c, it) }
         val rejected = submit(c, "验证码9999。").get(1, TimeUnit.SECONDS)
         assertEquals(SmsDisposition.BUSY, rejected.disposition)
-        assertEquals(listOf("甲消息。"), started)
+        assertEquals(listOf("未知联系人，甲消息。"), started)
         repeat(6) { index -> complete(callbacks[index]) }
-        assertEquals(listOf("甲消息。", "验证码一二三四。", "验证码五六七八。", "乙消息。", "丙消息。", "丁消息。"), started)
+        assertEquals(listOf("甲消息。", "验证码一二三四。", "验证码五六七八。", "乙消息。", "丙消息。", "丁消息。").map { "未知联系人，$it" }, started)
         assertTrue(results.all { it.get(1, TimeUnit.SECONDS).disposition == SmsDisposition.COMPLETED })
     }
     @Test fun waitingConsumesItsOwnOriginalBudget() = scenario { c, started, callbacks ->

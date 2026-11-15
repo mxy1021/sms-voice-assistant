@@ -100,31 +100,6 @@ class SpeechExperienceTest {
         assertEquals(8000L < SmsSafetyWindow.SESSION_BUDGET_MS, SmsSafetyWindow.withinBudget(0, 8000))
         assertFalse(SmsSafetyWindow.withinBudget(0, 8500))
     }
-    private class Effect : LoudnessEffect {
-        var gain = -1; var releases = 0; var fail = false
-        override fun configure(gainMb: Int) { gain = gainMb; if (fail) error("controlled") }
-        override fun release() { releases++ }
-    }
-    @Test fun volumeIsPerTrackAndReleaseIsIdempotent() {
-        listOf(0, 3, 6).forEach { gain ->
-                val effect = Effect(); var calls = 0
-                val session = SessionLoudness { id -> assertEquals(17, id); calls++; effect }
-                assertTrue(session.attach(17, gain))
-                assertEquals(if (gain == 0) 0 else 1, calls)
-                if (gain != 0) assertEquals(gain * 100, effect.gain)
-                session.release(); session.release()
-                assertEquals(if (gain == 0) 0 else 1, effect.releases)
-                assertFalse(session.attach(17, gain))
-        }
-    }
-    @Test fun audioEffectFailureAndGlobalSessionAreSafe() {
-        val effect = Effect().also { it.fail = true }
-        val session = SessionLoudness { effect }
-        assertFalse(session.attach(0, 6)); assertFalse(session.attach(17, 9))
-        assertFalse(session.attach(17, 6)); assertEquals(1, effect.releases)
-        session.release(); assertEquals(1, effect.releases)
-        assertFalse(SessionLoudness { error("unsupported") }.attach(17, 3))
-    }
     @Test fun gainPersistsWithoutLosingOldConfigurationOrRevivingAudio() {
         val store = MemorySettingsStore(); val repo = SettingsRepository(store, 1)
         repo.selectDevice("synthetic"); repo.setEnabled(true)

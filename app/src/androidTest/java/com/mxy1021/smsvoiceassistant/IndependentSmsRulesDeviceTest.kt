@@ -33,8 +33,8 @@ class IndependentSmsRulesDeviceTest {
             main { app.settings.setOtpOnly(only); app.settings.setSimplify(simplify) }
             listOf(DebugSmsFixtures.SHORT_OTP, DebugSmsFixtures.SHORT).forEachIndexed { index, body ->
                 val expected = if (index == 0) {
-                    if (simplify) "您收到的验证码为一二三四。" else "验证码一二三四。"
-                } else if (only) null else body
+                    if (simplify) "您收到的验证码为一二三四。" else "未知联系人，验证码一二三四。"
+                } else if (only) null else "未知联系人，$body"
                 var calls = 0
                 val coordinator = SmsCoordinator(app) { text, _, _, done ->
                     calls++

@@ -45,6 +45,11 @@ object SpeechFormatter {
     const val MAX_INPUT_CHARS = 2048
     const val MAX_FULL_TEXT_CHARS = 80
     const val TEST_TEXT = "短信语音助手测试，耳机播放正常。"
+    const val UNKNOWN_CONTACT = "未知联系人"
+    /** Final sender label is resolved only after lookup. The body-only choose() is preflight;
+     * reserving the unknown prefix before lookup would incorrectly reject a shorter known name. */
+    fun forPlayback(body: String, settings: AppSettings, contactName: String? = null): SpeechDecision =
+        choose(body, settings, ContactMatchPolicy.safeName(contactName) ?: UNKNOWN_CONTACT)
     fun choose(body: String, settings: AppSettings, contactName: String? = null): SpeechDecision {
         if (!settings.announcingEnabled) return SpeechDecision(null, "已暂停，本条不播报")
         if (body.isBlank() || body.length > MAX_INPUT_CHARS)

@@ -72,15 +72,15 @@ class DebugSmsInjectionTest {
     private fun message(id: String, text: String, only: Boolean, simplify: Boolean,
         ignored: Boolean = false, textLimit: Boolean = false, parts: List<String> = listOf(text)) {
         configure(only, simplify)
-        val actual = main { SpeechFormatter.choose(text, app.settings.snapshot()).text }
+        val actual = main { SpeechFormatter.forPlayback(text, app.settings.snapshot()).text }
         val expected = if (ignored || textLimit) null else if (simplify && OtpExtractor.extract(text) != null) {
             val detected = OtpExtractor.extract(text)
             assertNotNull("$id reliable OTP required", detected)
             SpeechFormatter.choose(text, AppSettings(announcingEnabled = true)).text
         } else if (OtpExtractor.extract(text) != null) {
             val otp = OtpExtractor.extract(text)!!
-            SmsTextCleaner.clean(text.replaceRange(otp.codeRange, SpeechFormatter.spokenCode(otp.code)))
-        } else SmsTextCleaner.clean(text)
+            "未知联系人，" + SmsTextCleaner.clean(text.replaceRange(otp.codeRange, SpeechFormatter.spokenCode(otp.code)))
+        } else "未知联系人，" + SmsTextCleaner.clean(text)
         if (!main { app.settings.snapshot().announcingEnabled }) {
             val r = await(submit(text, parts))
             assertEquals(SmsDisposition.REJECTED, r.disposition)
@@ -97,8 +97,10 @@ class DebugSmsInjectionTest {
         assertEquals("未触发（解析后业务注入）", diagnostics["SMS_RECEIVED"])
         assertFalse("$id must not fabricate PendingResult.finish", diagnostics.containsKey("t.PendingResult.finish"))
         if (ignored || textLimit) {
-            assertEquals(SmsDisposition.IGNORED, r.disposition); assertNull(r.speech)
-            if (textLimit) assertTrue(r.reason.contains("80"))
+            val rejectedAtPreflight = ignored || main { SpeechFormatter.choose(text, app.settings.snapshot()).text == null }
+            assertEquals(if (rejectedAtPreflight) SmsDisposition.IGNORED else SmsDisposition.REJECTED, r.disposition)
+            assertNull(r.speech)
+            if (textLimit) assertTrue(r.reason.contains("上限") || r.reason.contains("80"))
             emit(id, "PASS", if (textLimit) "WHOLE_TEXT_REJECTED_BEFORE_TTS" else "RULE_FILTER_IGNORED", r)
         } else {
             val s = r.speech ?: error("Missing terminal speech telemetry")
@@ -504,7 +506,7 @@ class DebugSmsInjectionTest {
                             message("D06.context", DebugSmsFixtures.CONTEXTUAL, true, true)
                             message("D06.ambiguous", "验证码1234或5678。", true, true, ignored = true)
                         }
-                        "Long80" -> { assertEquals(80, DebugSmsFixtures.LONG80.length); message("D07", DebugSmsFixtures.LONG80, false, true) }
+                        "Long80" -> { assertEquals(80, DebugSmsFixtures.LONG80.length); message("D07", DebugSmsFixtures.LONG80, false, true, textLimit = true) }
                         "Long81" -> { assertEquals(81, DebugSmsFixtures.LONG81.length); message("D08", DebugSmsFixtures.LONG81, false, true, textLimit = true) }
                         "LongPcm" -> message("D09", DebugSmsFixtures.LONG_PCM, false, true)
                         "Rapid" -> rapid()

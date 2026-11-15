@@ -1,6 +1,6 @@
 # V2.0 阶段1.1架构
 
-状态：开发中，人工待验收。沿用SmsReceiver → SmsAssembly / ReplayGuard → SmsCoordinator → SpeechFormatter → SpeechSession；不新增接收架构或常驻对象。
+状态：READY_FOR_USER_ACCEPTANCE，等待用户正式关闭。沿用SmsReceiver → SmsAssembly / ReplayGuard → SmsCoordinator → SpeechFormatter → SpeechSession；不新增接收架构或常驻对象。
 
 ## 文本与联系人
 
@@ -8,11 +8,17 @@ SmsSpeechRules为唯一四组合决策层。OtpExtractor仅处理上下文明确
 
 全文模式才查询联系人。ContactMatchPolicy对中国手机号统一+86/0086/空格/横线，并支持明确国际E.164；不做尾号模糊匹配，不匹配短号、字母ID。PhoneLookup查询只投影NUMBER和DISPLAY_NAME，逐行精确复核；超过8行、同号异名、名字为号码或包含长号码时保守降级。
 
-ContactNameResolver仅本事件创建工作线程与CancellationSignal，250ms到期返回正文；查询前、逐行、返回后检查READ_CONTACTS。游标use关闭、超时取消查询、不缓存。取消Provider调用由临时线程执行以避免Binder阻塞主线程；平台查询/取消能否及时退出仍需真机压力验证，250ms是应用放弃结果期限，不是对第三方Provider内部执行时间的保证。旧permit或预算失效时不启动语音。
+ContactNameResolver仅本事件创建工作线程与CancellationSignal，250ms到期放弃名称并返回“未知联系人”＋正文；查询前、逐行、返回后检查READ_CONTACTS。游标use关闭、超时取消查询、不缓存。取消Provider调用由临时线程执行以避免Binder阻塞主线程；平台查询/取消能否及时退出仍需真机压力验证，250ms是应用放弃结果期限，不是对第三方Provider内部执行时间的保证。旧permit或预算失效时不启动语音。
+
+最终发送前统一用SpeechFormatter.forPlayback复核可靠姓名；无可靠姓名（未授权/拒绝/撤权/无匹配/超时/失败/短号或字母ID/不安全名称）则固定“未知联系人”，不朗读号码。choose用于正文预检，不能在查询前先预留较长的未知前缀而误拒绝稍后可加入短姓名的文本。最终姓名/未知提示和转换正文共同计入80 UTF-16，超限整条拒绝；空正文不会仅播未知提示，精简验证码仍无此前缀。
 
 ## 音量与资源
 
-SessionLoudness只接受正AudioTrack会话ID和0/3/6dB；0不创建效果，3/6转换为300/600mB。构造、配置、启用失败释放候选并回退。SpeechSession唯一终结路径先停止/flush轨道，释放效果再释放轨道；所有正常、取消、永久焦点丢失和异常都经该路径。音效不调用系统setStreamVolume/adjustStreamVolume，也不控制其他播放器。代码作用域隔离不等于已通过设备听感。
+已替换原SessionLoudness/LoudnessEnhancer为SpeechPcmProcessor，仅处理当前会话的完整16位PCM：能量门控RMS→有界基础标准化→0/3/6/9dB用户增益→声道联动平滑限制→4倍/32 tap插值峰值估计与必要整体衰减。反向5ms时间常数预判、前向50ms释放；不是逐样本硬削顶。满幅前量化，不改变样本数、采样率、声道或内容时长；最终峰值估计守门−1.2dBFS，样本限制−2dBFS。实际输出不保证每档RMS加3dB。
+
+在原有会话worker内处理，不新增长期线程；输入先验证5000ms/1MiB及剩余预算，处理后再做原时间、许可、焦点与实际蓝牙门禁。处理失败整条拒绝；循环响应取消/中断，私有缓冲清零，晚回调不创建轨道或恢复旧语音。现有统一end释放TTS/轨道/焦点，不叠加不可观测的硬件增强器；系统媒体音量无写调用。参数由三轮本机测量/用户听感选定，见专项审计。
+
+显示模式追加在SettingsRepository，沿用原偏好键；新增displayMode键默认SYSTEM，更新不增加语音generation。MaterialTheme响应设置和系统模式，SideEffect只更新系统栏图标对比。短信、队列、广播生命周期不依赖Activity或主题。
 
 ## 时间测量
 

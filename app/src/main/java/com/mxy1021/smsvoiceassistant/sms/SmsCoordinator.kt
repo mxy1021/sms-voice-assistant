@@ -113,9 +113,9 @@ class SmsCoordinator(private val app: ProbeApplication,
                 if (!valid()) {
                     finish(SmsDisposition.REJECTED, "查询后配置、权限或预算已失效"); release(false); return
                 }
-                val finalText = if (name == null) text else SpeechFormatter.choose(body, settings, name).text
+                val finalText = SpeechFormatter.forPlayback(body, settings, name).text
                 if (finalText == null) {
-                    finish(SmsDisposition.REJECTED, "加入联系人后全文超过安全上限"); release(true); return
+                    finish(SmsDisposition.REJECTED, "加入发信人提示后全文超过安全上限"); release(true); return
                 }
                 startSpeech(finalText, !app.visible, id) { speech ->
                     finish(when {

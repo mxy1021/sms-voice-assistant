@@ -71,7 +71,7 @@ class SessionCloseoutDeviceTest {
         var ownedSession: SpeechSession? = null
         fun worker() = SpeechSession::class.java.getDeclaredField("worker").apply { isAccessible = true }
             .get(ownedSession) as ExecutorService
-        var requests = 0; var abandons = 0; var effectCreated = 0; var effectReleased = 0
+        var requests = 0; var abandons = 0
         var start = 0L
         val deps = object : SpeechDependencies {
             override fun permissionGranted(context: Context, permission: String): Boolean =
@@ -95,13 +95,7 @@ class SessionCloseoutDeviceTest {
                 return if (mode == "focusFailure") AudioManager.AUDIOFOCUS_REQUEST_GRANTED
                     else super.abandonFocus(audio, request)
             }
-            override fun createLoudness(sessionId: Int): LoudnessEffect {
-                val native = super.createLoudness(sessionId); effectCreated++
-                return object : LoudnessEffect {
-                    override fun configure(gainMb: Int) = native.configure(gainMb)
-                    override fun release() { native.release(); effectReleased++ }
-                }
-            }
+
         }
         val done = CompletableFuture<Terminal>()
         val action = app.packageName + ".test.SESSION_CLOSEOUT"
@@ -163,7 +157,7 @@ class SessionCloseoutDeviceTest {
             assertEquals(mode == "complete", speech.playbackCompleted)
             assertTrue(speech.focusReleased)
             assertEquals(1, engine?.stops); assertEquals(1, engine?.shutdowns)
-            assertEquals(requests, abandons); assertEquals(effectCreated, effectReleased)
+            assertEquals(requests, abandons)
             assertEquals(1, completions.get()); assertEquals(1, finishCalls.get())
             assertNull(main { app.session })
             track?.let { assertEquals(AudioTrack.STATE_UNINITIALIZED, it.state) }

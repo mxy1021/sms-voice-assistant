@@ -11,6 +11,7 @@ MARKERS = (b"SmsBudgetDeviceTest", b"SVA_BUDGET", b"SpeechExperienceDeviceTest",
            "【测试平台】验证码：".encode("utf-8"), "这是一条用于检查完整语音播放时间上限".encode("utf-8"))
 MARKERS += (b"SessionCloseoutDeviceTest", b"SVA_CLOSEOUT")
 MARKERS += (b"LoudnessAuditDeviceTest", b"SVA_LOUDNESS_AUDIT")
+MARKERS += (b"ThemeGainDeviceTest", b"SVA_THEME_GAIN")
 FAULT_MARKERS = (b"ControlledSpeechDependencies", b"ObservedFailureTts", b"ControlledFailure")
 
 

@@ -55,20 +55,13 @@ class SpeechExperienceDeviceTest {
         val manager = app.getSystemService(AudioManager::class.java)
         if (mode == "loss") assumeTrue("Do not permanently interrupt an external music player", !manager.isMusicActive)
         val volume = manager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        var created = 0; var released = 0; var configured = 0; var actualSession = 0
+        var processed = 0
         val deps = object : SpeechDependencies {
-            override fun createLoudness(sessionId: Int): LoudnessEffect {
-                actualSession = sessionId
-                if (mode == "effectFailure") throw UnsupportedOperationException("controlled effect failure")
-                val native = super.createLoudness(sessionId)
-                created++
-                return object : LoudnessEffect {
-                    override fun configure(gainMb: Int) {
-                        assertEquals(gain * 100, gainMb)
-                        native.configure(gainMb); configured++
-                    }
-                    override fun release() { try { native.release() } finally { released++ } }
-                }
+            override fun processPcm(data: ByteArray, rate: Int, channels: Int, gainDb: Int,
+                                    cancelled: () -> Boolean): SpeechPcmProcessor.Result {
+                assertEquals(gain, gainDb); processed++
+                if (mode == "processFailure") throw IllegalStateException("controlled PCM failure")
+                return super.processPcm(data, rate, channels, gainDb, cancelled)
             }
         }
         val done = CompletableFuture<SpeechResult>()
@@ -81,8 +74,12 @@ class SpeechExperienceDeviceTest {
                 app.speak("短信语音测试，完整播放。", false, fromSms = true, smsEventId = id,
                     dependencies = deps, result = { done.complete(it) })
             }
-            val completes = mode == "complete" || mode == "effectFailure"
-            if (!completes) {
+            val completes = mode == "complete" || mode == "theme"
+            if (mode == "theme") {
+                assertTrue(waitForAudio())
+                main { com.mxy1021.smsvoiceassistant.settings.DisplayMode.entries.forEach { app.settings.setDisplayMode(it) } }
+            }
+            if (!completes && mode != "processFailure") {
                 assertTrue("PCM must start before the terminal operation", waitForAudio())
                 if (mode == "cancel") main { app.session?.cancel() }
                 else {
@@ -97,24 +94,55 @@ class SpeechExperienceDeviceTest {
             assertEquals(completes, result.playbackCompleted)
             assertTrue(result.focusReleased)
             if (mode == "loss") assertTrue(result.focusChanges.contains(AudioManager.AUDIOFOCUS_LOSS))
-            assertEquals(created, released)
-            if (gain == 0) assertEquals(0, created) else assertTrue(actualSession > 0)
+            assertEquals(1, processed)
+            if (mode == "processFailure") assertEquals(0, result.bytesWritten)
             assertEquals(volume, manager.getStreamVolume(AudioManager.STREAM_MUSIC))
             assertNull(main { app.session })
             instrumentation.sendStatus(2, Bundle().apply { putString("stream",
-                "\nSVA_EXPERIENCE gain=$gain;mode=$mode;effectCreated=$created;configured=$configured;released=$released;streamVolumeUnchanged=true;source=DEBUG_SIMULATION\n") })
+                "\nSVA_EXPERIENCE gain=$gain;mode=$mode;pcmProcessed=$processed;nativeEffect=false;streamVolumeUnchanged=true;source=DEBUG_SIMULATION\n") })
         } finally {
             contender?.let { main { competingAudio.abandonAudioFocusRequest(it) } }
-            main { app.session?.cancel(); app.settings.setSpeechGain(settings.speechGainDb) }
+            main { app.session?.cancel(); app.settings.setSpeechGain(settings.speechGainDb); app.settings.setDisplayMode(settings.displayMode) }
             Thread.sleep(100)
             assertNull(main { app.session })
             assertEquals(settings, main { app.settings.snapshot() })
         }
     }
-    @Test fun originalGainCompletesWithoutAnEffect() = audio(0, "complete")
-    @Test fun lightGainIsTrackScopedAndReleased() = audio(3, "complete")
-    @Test fun strongGainIsTrackScopedAndReleased() = audio(6, "complete")
-    @Test fun unsupportedEffectFallsBackToCompleteOriginalSpeech() = audio(6, "effectFailure")
+    @Test fun zeroGainCompletesWithBaseNormalization() = audio(0, "complete")
+    @Test fun lightGainCompletesWithoutGlobalEffect() = audio(3, "complete")
+    @Test fun strongGainCompletesWithoutGlobalEffect() = audio(6, "complete")
+    @Test fun processingFailureRejectsWholeBeforeAudio() = audio(6, "processFailure")
     @Test fun strongGainIsReleasedOnCancellation() = audio(6, "cancel")
     @Test fun strongGainIsReleasedOnPermanentFocusLoss() = audio(6, "loss")
+    @Test fun themeChangesDoNotInterruptActiveSpeech() = audio(0, "theme")
+    @Test fun cancellingDuringProcessingCannotCreateTrackOrReviveSpeech() {
+        assumeTrue(main { app.smsCoordinator.preflight() == null && app.session == null })
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val exited = java.util.concurrent.CountDownLatch(1)
+        val done = CompletableFuture<SpeechResult>()
+        val completions = java.util.concurrent.atomic.AtomicInteger()
+        val deps = object : SpeechDependencies {
+            override fun processPcm(data: ByteArray, rate: Int, channels: Int, gainDb: Int,
+                                    cancelled: () -> Boolean): SpeechPcmProcessor.Result {
+                entered.countDown()
+                try { Thread.sleep(5000); return super.processPcm(data,rate,channels,gainDb,cancelled) }
+                finally { exited.countDown() }
+            }
+        }
+        try {
+            main {
+                val id = app.beginSmsEvent(SystemClock.elapsedRealtime(),SmsSource.DEBUG_SIMULATION)
+                app.speak("晚上七点见。",false,fromSms=true,smsEventId=id,dependencies=deps,
+                    result = { completions.incrementAndGet(); done.complete(it) })
+            }
+            assertTrue(entered.await(4,TimeUnit.SECONDS))
+            main { app.session?.cancel() }
+            val result = done.get(2,TimeUnit.SECONDS)
+            assertFalse(result.playbackCompleted); assertEquals(0,result.bytesWritten)
+            assertFalse(result.actualRouteConfirmed); assertTrue(result.focusReleased)
+            assertTrue(exited.await(1,TimeUnit.SECONDS))
+            Thread.sleep(150)
+            assertNull(main { app.session }); assertEquals(1,completions.get())
+        } finally { main { app.session?.cancel() } }
+    }
 }

@@ -14,6 +14,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -32,6 +33,9 @@ import com.mxy1021.smsvoiceassistant.bluetooth.AudioPortRefresh
 import com.mxy1021.smsvoiceassistant.sms.SpeechFormatter
 import com.mxy1021.smsvoiceassistant.ui.Readiness
 import com.mxy1021.smsvoiceassistant.audio.Stage0Log
+import com.mxy1021.smsvoiceassistant.audio.SpeechGain
+import com.mxy1021.smsvoiceassistant.settings.DisplayMode
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
@@ -66,7 +70,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            val preferences by app.settings.state.collectAsState()
+            val dark = preferences.displayMode.dark(isSystemInDarkTheme())
+            SideEffect {
+                enableEdgeToEdge(
+                    statusBarStyle = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                        else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+                    navigationBarStyle = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                        else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
+            }
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
                 Surface(Modifier.fillMaxSize()) { MainScreen() }
             }
         }
@@ -167,7 +180,7 @@ class MainActivity : ComponentActivity() {
                 Toggle("仅播报验证码", "开启后，无法可靠识别的短信将忽略。", settings.otpOnlyEnabled) {
                     app.settings.setOtpOnly(it); app.cancelSpeechWork()
                 }
-                Toggle("精简验证码播报", "识别到验证码时只读平台和验证码；关闭则读联系人名称及清理后的全文。此开关独立保存。",
+                Toggle("精简验证码播报", "识别到验证码时只读平台和验证码；关闭则读联系人或“未知联系人”及清理后的全文。此开关独立保存。",
                     settings.otpSimplifyEnabled) {
                     app.settings.setSimplify(it); app.cancelSpeechWork()
                 }
@@ -180,17 +193,30 @@ class MainActivity : ComponentActivity() {
                 Text("全文最多80个字符，完整语音最多5秒，且须满足${com.mxy1021.smsvoiceassistant.sms.SmsSafetyWindow.SESSION_BUDGET_MS}ms总预算。超限整条拒绝并显示状态，不截断。较长全文暂不支持。",
                     style = MaterialTheme.typography.bodySmall)
             }
-            Section("语音音量增强") {
-                Text("仅增强本次语音，不改变系统媒体音量。默认原始音量。")
-                listOf(0 to "原始（0dB）", 3 to "轻度增强（+3dB）", 6 to "较强增强（+6dB）").forEach { (gain, label) ->
+            Section("语音增益") {
+                Text("语音增益：${if (settings.speechGainDb > 0) "+" else ""}${settings.speechGainDb}dB")
+                Slider(value = settings.speechGainDb / 3f, onValueChange = { value ->
+                    val gain = SpeechGain.levels[value.roundToInt().coerceIn(SpeechGain.levels.indices)]
+                    if (gain != settings.speechGainDb) {
+                        app.settings.setSpeechGain(gain); app.cancelSpeechWork()
+                    }
+                }, valueRange = 0f..SpeechGain.levels.lastIndex.toFloat(), steps = SpeechGain.levels.size - 2,
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "语音增益，${settings.speechGainDb}dB" })
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    SpeechGain.levels.forEach { Text("$it", style = MaterialTheme.typography.labelSmall) }
+                }
+                Text("基础语音自动调整响度；此滑动条只调整本APP语音，不改变系统或音乐音量。默认0dB。")
+                Text("峰值保护可能限制高档位的实际提升。请从0dB开始，逐档比较，避免过高音量。", style = MaterialTheme.typography.bodySmall)
+            }
+            Section("界面显示模式") {
+                listOf(DisplayMode.LIGHT, DisplayMode.DARK, DisplayMode.SYSTEM).forEach { mode ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = settings.speechGainDb == gain, onClick = {
-                            app.settings.setSpeechGain(gain); app.cancelSpeechWork()
-                        }, modifier = Modifier.semantics { contentDescription = label })
-                        Text(label)
+                        RadioButton(selected = settings.displayMode == mode, onClick = {
+                            app.settings.setDisplayMode(mode)
+                        }, modifier = Modifier.semantics { contentDescription = mode.label })
+                        Text(mode.label)
                     }
                 }
-                Text("请从原始音量开始比较；设备不支持时使用原始音频。增强可能影响听感，请避免过高音量。", style = MaterialTheme.typography.bodySmall)
             }
             Section("蓝牙设备") {
                 Text(selectedName, style = MaterialTheme.typography.titleMedium)
@@ -209,7 +235,7 @@ class MainActivity : ComponentActivity() {
                 if (!contacts) OutlinedButton(onClick = {
                     permissions.launch(arrayOf(Manifest.permission.READ_CONTACTS))
                 }) { Text("允许查询短信发信人名称") }
-                Text("仅按当前短信号码精确查询，不保存联系人；未授权或无法可靠匹配时只读正文，不朗读发信人号码。", style = MaterialTheme.typography.bodySmall)
+                Text("仅按当前短信号码精确查询，不保存联系人；未授权或无法可靠匹配时读“未知联系人”加正文，不朗读发信人号码。", style = MaterialTheme.typography.bodySmall)
                 if (!sms || !bluetooth) Button(onClick = {
                     permissions.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.BLUETOOTH_CONNECT))
                 }) { Text("申请必要权限") }
