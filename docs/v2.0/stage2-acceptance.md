@@ -1,11 +1,11 @@
 # V2.0 阶段2｜验收状态
 
-日期 2026-11-24（Asia/Shanghai）。**NOT_READY**，技术暂评 **CONDITIONAL**，等待[目标机操作单](stage2-test-plan.md)和[验证矩阵](stage2-test-results.md)的真实证据。
+日期 2026-11-24（Asia/Shanghai）。**NOT_READY**，技术暂评 **CONDITIONAL**。目标机第一轮前台观察 N01～N07、N11 已完成，后续场景依据[目标机操作单](stage2-test-plan.md)执行。[验证矩阵](stage2-test-results.md)
 
 | 强制放行条件 | 状态 |
 |---|---|
-| 真实微信通知接收及权限行为 | NOT_RUN |
-| 真实单聊、群聊与可见字段 | NOT_RUN |
+| 真实微信通知接收及权限行为 | PARTIAL，前台收信、主动授权和绑定链路通过，撤权及恢复待测 |
+| 真实单聊、群聊与可见字段 | PASS，本轮两个前台样本的普通标题及正文通过人工对照 |
 | Home、锁屏、静置与重启后及时收到 | NOT_RUN |
 | Android 17 后台音频是否合规可用 | NOT_RUN |
 | 完整指定耳机播报，音乐恢复且无手机语音 | NOT_RUN |

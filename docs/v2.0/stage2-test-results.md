@@ -20,17 +20,17 @@
 
 | ID | 项目 | 状态 | 当前证据 |
 |---|---|---|---|
-| N01 | 通知使用权授予 | NOT_RUN | 用户通过系统设置操作 |
-| N02 | 系统绑定、断开和重绑 | NOT_RUN | 待真实生命周期回调 |
-| N03 | 真实单聊 | NOT_RUN | 待目标机回调和用户对照 |
-| N04 | 真实群聊 | NOT_RUN | 待目标机回调和用户对照 |
-| N05 | 实际标题提取 | NOT_RUN | 待真实通知 |
-| N06 | 实际正文提取 | NOT_RUN | 待真实通知 |
-| N07 | 实际联系人和群名 | NOT_RUN | 待结构化字段或人工对照 |
+| N01 | 通知使用权授予 | PASS | 用户确认手动授权，ADB 确认当前用户启用该监听组件，`CONNECTED` 显示 `access=true` |
+| N02 | 系统绑定、断开和重绑 | PASS | 首次 `CONNECTED`，随后观测到主动解绑导致 `DESTROYED` / `DISCONNECTED`，公开 API 请求重绑后再收到 `CONNECTED` |
+| N03 | 真实单聊 | PASS | 用户确认发送，关联 `run=6ae4be3a` / `callback=1` 的真实微信 `POSTED` |
+| N04 | 真实群聊 | PASS | 首次发送时该群通知关闭。开启后发送新消息，关联 `run=6ae4be3a` / `callback=3` 的真实微信 `POSTED` |
+| N05 | 实际标题提取 | PASS | 两条均读取到非空 `EXTRA_TITLE`，系统显示经人工对照为单聊联系人及群聊名称 |
+| N06 | 实际正文提取 | PASS | 两条均读取到非空 `EXTRA_TEXT`，系统显示经人工对照包含所发短消息，群聊正文还包含发送者 |
+| N07 | 实际联系人和群名 | PASS | 本轮两个样本通过普通显示标题取得联系人或群名候选，并由用户对照确认。未提供结构化会话标题、发送者或群标记 |
 | N08 | 字段缺失、预览关闭和锁屏保护 | NOT_RUN | 待真实场景 |
 | N09 | 真实连续、更新、重复和移除 | NOT_RUN | 待回调序列、别名和原因码 |
 | N10 | 非消息通知 | NOT_RUN | 待真实场景 |
-| N11 | 前台接收 | NOT_RUN | 待真实通知 |
+| N11 | 前台接收 | PASS | 单聊和群聊回调时均为 `stage2Visible=true`、`importance=100`、`interactive=true`、`keyguard=false` |
 | N12 | Home 接收 | NOT_RUN | 待真实通知 |
 | N13 | 关屏和锁屏接收 | NOT_RUN | 待真实通知 |
 | N14 | 静置接收 | NOT_RUN | 待真实通知及静置条件 |
@@ -46,3 +46,38 @@
 | N24 | 原 SMS 功能及配置 | NOT_RUN | 静态、受控设备、配置一致性已有独立证据，真实 SMS 和微信同时到来待测 |
 
 矩阵按实际场景追加记录。授权、系统绑定、解析 fixture、真实微信、PCM、路由标记、耳机听感和手机扬声器证据各有独立状态。阶段1.1既有验收见[关闭报告](stage1.1-closure-report.md)。
+
+## 第一轮真实微信通知观察
+
+### N01 / N02 系统授权与连接
+
+2026-11-24，目标 vivo，系统时间 Asia/Shanghai。用户确认手动授权。ADB 只读检查从该组件未启用变为已启用。同一进程 `run=6ae4be3a` 取得以下回调。
+
+| 设备时间 | 观察 |
+|---|---|
+| 22:41:54.068 | 进入系统设置后探针停止显示，`access=false`、`bound=false` |
+| 22:42:11.504 | 首次 `CONNECTED`，`access=true`、`bound=true`、`repeated=false` |
+| 22:42:16.770–22:42:16.775 | `UNBIND_REQUEST` 后收到 `DESTROYED` 和 `DISCONNECTED`，`access=true`、`bound=false` |
+| 22:42:24.119–22:42:24.167 | `REBIND_REQUEST` 后 48 ms 收到 `CONNECTED`，`access=true`、`bound=true`、`repeated=false` |
+
+授权场景取证结束时阶段2诊断页是前台 Activity，当前进程当时尚无 `POSTED`。主动解绑测试时授权保持开启，系统撤权及恢复另见 N16/N17。
+
+### N03 / N05 / N06 / N07 / N11 真实单聊
+
+用户确认发送新的单聊。探针在 `run=6ae4be3a` 收到 `callback=1`、`notification=1`、`channel=2`，`seenKey=false`，类别 `MESSAGE`。设备墙钟为 22:45:03.760，系统通知发布时间为 22:45:03.678，发布到回调 82 ms。`access=true`、`bound=true`、`stage2Visible=true`、`importance=100`、屏幕交互中且未锁定。
+
+`EXTRA_TITLE` 为 6、`EXTRA_TEXT` 为 3 个 UTF-16 代码单元。扩展正文、会话标题、消息数组、结构化最新发送者/正文及群标记均缺失，非 `MessagingStyle`。用户查阅该条系统通知，确认标题显示预期联系人，正文与所发短消息一致。探针读取证据为普通标题和正文的长度，系统显示语义来自这次人工对照。
+
+### N04 真实群聊首次尝试
+
+用户确认已发送群聊消息。至设备时间 22:49:00，同一进程仍没有新的微信 `POSTED`。22:46:43.431 的 `callback=2` 为单聊 `notification=1` 的 `REMOVED`。探针随后在 22:46:52.840 恢复可见，`access=true`、`bound=true`。查询时系统的当前微信通知数为 0。用户随后在 vivo 的群内确认该消息已到达，并确认发送时该测试群的通知已关闭。用户已在微信中重新开启该群通知，下一条新消息用于复测。
+
+### N04 / N05 / N06 / N07 / N11 群聊复测
+
+用户确认开启测试群通知后发送新消息。探针在 `run=6ae4be3a` 收到 `callback=3`、`notification=3`、`channel=2`，`seenKey=false`，类别 `MESSAGE`。设备墙钟为 22:51:26.815，系统通知发布时间为 22:51:26.769，发布到回调 46 ms。`access=true`、`bound=true`、`stage2Visible=true`、`importance=100`、屏幕交互中且未锁定。
+
+`EXTRA_TITLE` 为 3、`EXTRA_TEXT` 为 14 个 UTF-16 代码单元。扩展正文、会话标题、消息数组、结构化最新发送者/正文及群标记均缺失，非 `MessagingStyle`。用户对照系统通知，确认标题为群名，正文包含发送者和所发短消息。探针只记录字段长度和存在性。显示语义来自人工对照，适用范围为本轮样本。
+
+### 第一轮汇总
+
+N01～N07、N11 共 8 项通过。单聊和群聊复测的系统通知发布到回调耗时分别为 82 ms 和 46 ms，均为前台、亮屏、未锁定且监听授权有效的样本。群聊首次未收到回调的记录保留，适用条件为微信测试群已开启通知。普通字段提供两种通知的显示标题与正文，两条均缺失结构化会话与发送者字段。下一轮从 Home 后的新通知接收 N12 开始。音频相关项及其他尚未执行的场景保持 NOT_RUN。
