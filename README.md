@@ -1,12 +1,14 @@
 # SMS Voice Assistant
 
-**V2.0阶段1.1已正式验收通过并关闭：CLOSED / ACCEPTED（2026-11-16）。** 用户已接受最终报告列明的限制、受阻、不可测和暂缓项；历史失败、修复及未完成事项原样保留。交付源码`fbd183b71f1eec74a84e00976256044c579a367c`，验收交付提交`68b378baca2599915b747f3f22c64ca0c769ff6b`，保留在`feature/v2-sms-speech-experience`，未合并main。阶段2未启动。
+**V2.0 阶段2「微信通知技术验证」已正式关闭，状态 CLOSED / ACCEPTED，技术等级 CONDITIONAL（2026-11-25）。** N01～N24 的 PASS 限于本次 vivo X200 Pro、OriginOS 7、Android 17/API 37 及各用例条件。交付为 Debug 技术验证原型，阶段3待单独授权。[阶段2正式关闭报告](docs/v2.0/stage2-closure-report.md) · [验收与未测边界](docs/v2.0/stage2-acceptance.md)
+
+**V2.0阶段1.1已正式验收通过并关闭：CLOSED / ACCEPTED（2026-11-16）。** 用户已接受最终报告列明的限制、受阻、不可测和暂缓项；历史失败、修复及未完成事项原样保留。交付源码`fbd183b71f1eec74a84e00976256044c579a367c`，验收交付提交`68b378baca2599915b747f3f22c64ca0c769ff6b`，保留在`feature/v2-sms-speech-experience`，未合并main。
 
 阶段1.1包括上下文验证码逐位朗读、联系人或“未知联系人”＋清理正文、独立四组合、PCM响度与峰值保护、0/+3/+6/+9dB离散增益、普通/深色/跟随系统、最多5条非抢占待播。正式仍8秒/5秒PCM/80 UTF-16/1MiB；8.5秒不采用，长文本扩容及耳机双击正式功能暂缓。见[正式关闭报告](docs/v2.0/stage1.1-closure-report.md)、[最终验收记录](docs/v2.0/stage1.1-acceptance.md)、[测试结果](docs/v2.0/stage1.1-test-results.md)、[交付报告](docs/v2.0/stage1.1-report.md)及[响度审计](docs/v2.0/audio-loudness-audit.md)。
 
-**历史基线：V2.0 阶段1：`3 / 2.0.0-stage1`，验收 PASS（2026-11-15，已验证vivo配置范围）。** 两个短信规则开关独立，四组合真实SMS及18项人工验收目标通过；末轮静置焦点失败已修复复测，原失败保留。未开发通知监听或消息队列，阶段2未启动。结果及人工操作单见 [V2.0阶段1报告](docs/v2.0/stage1-report.md)、[测试结果](docs/v2.0/stage1-test-results.md)、[验收报告](docs/v2.0/stage1-acceptance.md)。下述2026-11-12验收结果属于V1.0历史基线，与本轮结果分开记录。
+**历史基线：V2.0 阶段1：`3 / 2.0.0-stage1`，验收 PASS（2026-11-15，已验证vivo配置范围）。** 两个短信规则开关独立，四组合真实SMS及18项人工验收目标通过；末轮静置焦点失败已修复复测，原失败保留。该阶段尚无通知监听或消息队列。结果及人工操作单见 [V2.0阶段1报告](docs/v2.0/stage1-report.md)、[测试结果](docs/v2.0/stage1-test-results.md)、[验收报告](docs/v2.0/stage1-acceptance.md)。下述2026-11-12验收结果属于V1.0历史基线，与本轮结果分开记录。
 
-个人自用的本地Android短信语音助手。**阶段1已于2026-11-12正式验收通过并关闭（方案B：有限长度全文MVP）。最终43 PASS、0 FAIL、2 SKIP、0 NOT_RUN；H01～H07全部PASS，不重复计数。12项强制条件全部满足，剩余强制阻塞项0。** 详情见[阶段1报告](docs/stage1-report.md)和[最终验收表](docs/stage1-remaining-acceptance.md)。H01、T10、H07原始失败及修复复测历史保留。阶段2未启动。
+个人自用的本地Android短信语音助手。**V1.0 阶段1已于2026-11-12正式验收通过并关闭（方案B：有限长度全文MVP）。最终43 PASS、0 FAIL、2 SKIP、0 NOT_RUN；H01～H07全部PASS，不重复计数。12项强制条件全部满足，剩余强制阻塞项0。** 详情见[阶段1报告](docs/stage1-report.md)和[最终验收表](docs/stage1-remaining-acceptance.md)。H01、T10、H07原始失败及修复复测历史保留。
 
 ## 使用
 
@@ -109,4 +111,4 @@ python scripts/Test-Stage1Device.py
 
 两项SKIP是**R15（真实运营商多段SMS）和L09（自然系统回收后的收信）**，属于本轮非强制范围，真实场景继续未验证，不能改写为PASS。已通过的业务拼接、配置重建及H07重启冷启动不能冒充这两项真实验证。其他未单独实测的子场景仍按各条证据边界保留，不因用例归并PASS而补造真机结果。
 
-阶段1现作为正式关闭的已验收基线。除非未来发现明确缺陷，或用户主动提出新的开发要求，不再继续修改阶段1。本次未修改生产代码、功能、架构或安全限制，未重跑已通过的测试；阶段2未启动，也未创建阶段2代码、分支或实施任务。
+V1.0 阶段1为正式关闭的已验收基线。该次归档只记录 V1.0 结果。V2.0 阶段2使用独立分支完成技术验证，当前状态见本文开头。

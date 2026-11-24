@@ -1,6 +1,6 @@
 # V2.0 阶段2｜技术验证报告
 
-验收准备度 **READY_FOR_USER_ACCEPTANCE**。技术等级 **CONDITIONAL**。目标 vivo 在本机现有设置下完成真实通知接收与指定耳机播报，实测含 Home 及断 USB 静置触发。持续熄屏至播放完成、播报中撤权和永久焦点丢失缺独立真机样本。Android 17 官方后台音频限制仍须纳入正式设计。
+2026-11-25 用户正式验收，阶段2状态 **CLOSED / ACCEPTED**，技术等级 **CONDITIONAL**。目标 vivo 在本机现有设置下完成真实通知接收与指定耳机播报，实测含 Home 及断 USB 静置触发。持续熄屏至播放完成、播报中撤权和真实永久 AudioFocus 丢失保持 **NOT_RUN**。[正式关闭报告](stage2-closure-report.md)
 
 ## 1–2 Git 与阶段1.1
 
@@ -30,9 +30,9 @@
 | 20 | 构建与 Lint | Debug、unsigned Release、androidTest 均通过。Debug/Release Lint 各0错误、11警告。[矩阵](stage2-test-results.md) |
 | 21 | 修改文件 | 见下表。 |
 | 22 | APK 与 SHA256 | 见下表。 |
-| 23 | Git | 原型与受控测试提交 `e3c75e0857965fa951e13bf8a7feab018feccbc8`，阶段2文档见本文件所属提交。[阶段2分支](https://github.com/mxy1021/sms-voice-assistant/tree/feature/v2-stage2-wechat-feasibility) |
+| 23 | Git | 原型与受控测试提交 `e3c75e0857965fa951e13bf8a7feab018feccbc8`，最终实测证据提交 `8ddeea21e1f92912f8b79b1530857100306f04fe`，关闭归档为本文件所属提交。[阶段2分支](https://github.com/mxy1021/sms-voice-assistant/tree/feature/v2-stage2-wechat-feasibility) |
 | 24 | 当前未决 | 持续熄屏至输出结束、播报中撤销通知授权、真实播放中永久焦点丢失待独立取证。空正文与占位分别有实证。微信群需启用通知，结构化字段未在两条前台样本中提供。测试中的 10 分钟一次性等待及 PCM 门限确有拒绝样本。T01～T13 保持 TBD。 |
-| 25 | 阶段3条件 | 阶段2验证结果可提交用户验收。是否接受目标机适用范围和剩余实测边界，由用户确认后决定。 |
+| 25 | 阶段3条件 | 用户已接受阶段2目标机适用范围及剩余边界。持续熄屏播报列为阶段3 P0 技术风险，播放中撤权和真实永久 AudioFocus 丢失列为安全回归。阶段3待另行授权。 |
 
 | 修改范围 | 实际文件 |
 |---|---|
