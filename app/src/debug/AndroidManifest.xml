@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="com.tencent.mm" />
+    </queries>
     <application>
         <activity android:name=".Stage0DiagnosticsActivity" android:exported="false" />
+        <activity android:name=".stage2.WeChatProbeActivity" android:exported="false" />
+        <service android:name=".stage2.WeChatNotificationListener"
+            android:label="@string/wechat_probe_label"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

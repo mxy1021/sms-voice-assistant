@@ -3,6 +3,7 @@ package com.mxy1021.smsvoiceassistant
 import android.Manifest
 import android.bluetooth.BluetoothDevice
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Build
@@ -21,6 +22,7 @@ import com.mxy1021.smsvoiceassistant.sms.OtpParser
 import com.mxy1021.smsvoiceassistant.audio.TtsCompatibilityProbe
 import com.mxy1021.smsvoiceassistant.audio.ForegroundFocusTest
 import com.mxy1021.smsvoiceassistant.audio.Stage0Log
+import com.mxy1021.smsvoiceassistant.stage2.WeChatProbeActivity
 
 class Stage0DiagnosticsActivity : ComponentActivity() {
     private val app get() = application as ProbeApplication
@@ -92,6 +94,9 @@ class Stage0DiagnosticsActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("SMS Voice Assistant · 阶段 0", style = MaterialTheme.typography.titleLarge)
+            OutlinedButton(onClick = { startActivity(Intent(this@Stage0DiagnosticsActivity, WeChatProbeActivity::class.java)) }) {
+                Text("微信通知技术验证")
+            }
             Text("阶段1规则：全文最多80字符，且完整音频≤5秒并满足8秒总预算；超限整条拒绝。")
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("仅播报验证码")

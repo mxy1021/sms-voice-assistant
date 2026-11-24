@@ -13,6 +13,9 @@ MARKERS += (b"SessionCloseoutDeviceTest", b"SVA_CLOSEOUT")
 MARKERS += (b"LoudnessAuditDeviceTest", b"SVA_LOUDNESS_AUDIT")
 MARKERS += (b"ThemeGainDeviceTest", b"SVA_THEME_GAIN")
 FAULT_MARKERS = (b"ControlledSpeechDependencies", b"ObservedFailureTts", b"ControlledFailure")
+WECHAT_LISTENER = "com.mxy1021.smsvoiceassistant.stage2.WeChatNotificationListener"
+WECHAT_ACTIVITY = "com.mxy1021.smsvoiceassistant.stage2.WeChatProbeActivity"
+STAGE2_MARKERS = (b"WeChatNotificationListener", b"WeChatProbeActivity", b"WeChatFields", b"SVA_STAGE2")
 
 
 def manifest(path):
@@ -35,7 +38,23 @@ def main():
     for variant in ("debug", "release"):
         root = manifest(f"app/build/intermediates/merged_manifests/{variant}/process{variant.title()}Manifest/AndroidManifest.xml")
         assert {n.get(ANDROID + "name") for n in root.findall("uses-permission")} == EXPECTED
-        assert not root.findall(".//service")
+        services = root.findall(".//service")
+        probes = [n for n in root.findall(".//activity") if n.get(ANDROID + "name") == WECHAT_ACTIVITY]
+        queried_packages = [n.get(ANDROID + "name") for n in root.findall("queries/package")]
+        if variant == "debug":
+            listener, = services
+            assert listener.get(ANDROID + "name") == WECHAT_LISTENER
+            assert listener.get(ANDROID + "exported") == "false"
+            assert listener.get(ANDROID + "permission") == "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            assert "foregroundServiceType" not in {key.removeprefix(ANDROID) for key in listener.attrib}
+            assert [n.get(ANDROID + "name") for n in listener.findall("intent-filter/action")] == [
+                "android.service.notification.NotificationListenerService"]
+            probe, = probes
+            assert probe.get(ANDROID + "exported") == "false"
+            assert not probe.findall("intent-filter")
+            assert queried_packages == ["com.tencent.mm"]
+        else:
+            assert not services and not probes and "com.tencent.mm" not in queried_packages
         assert not root.findall("instrumentation")
         components = [n.get(ANDROID + "name", "") for n in root.findall(".//application/*")]
         assert not any("DebugSms" in name or "Injection" in name or "Simulator" in name for name in components)
@@ -46,7 +65,10 @@ def main():
         data = dex(apk(variant))
         assert all(marker not in data for marker in MARKERS), f"Test code leaked into {variant}"
         assert all(marker not in data for marker in FAULT_MARKERS), f"Failure substitutes leaked into {variant}"
+        if variant == "debug":
+            assert all(marker in data for marker in STAGE2_MARKERS)
         if variant == "release":
+            assert all(marker not in data for marker in STAGE2_MARKERS)
             assert not any("Stage0DiagnosticsActivity" in name for name in components)
     test = manifest("app/build/intermediates/packaged_manifests/debugAndroidTest/processDebugAndroidTestManifest/AndroidManifest.xml")
     assert len(test.findall("instrumentation")) == 1
@@ -56,8 +78,10 @@ def main():
     assert all(marker in data for marker in MARKERS)
     assert all(marker in data for marker in FAULT_MARKERS)
     print(json.dumps({"status": "PASS", "debugAndReleasePermissions": sorted(EXPECTED),
-                      "services": 0, "appInstrumentationEntries": 0, "testApkExportedComponents": 0,
-                      "testOnlyProtocolAndFixtures": True, "protectedRealSmsReceiver": True}))
+                      "debugSystemBoundListener": WECHAT_LISTENER, "releaseServices": 0,
+                      "appInstrumentationEntries": 0, "testApkExportedComponents": 0,
+                      "testOnlyProtocolAndFixtures": True, "protectedRealSmsReceiver": True,
+                      "wechatProbeDebugOnly": True}))
 
 
 if __name__ == "__main__":
